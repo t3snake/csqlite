@@ -25,18 +25,21 @@ int main(int argc, char *argv[]) {
 
         // Read next 2 bytes to get page size
         unsigned char buffer[2];
+
+        // Note: fread also skips bytes (like fseek), take this into account
         fread(buffer, 1, 2, database_file);
         unsigned short page_size = (buffer[1] | (buffer[0] << 8)); // big endian
 
         printf("database page size: %u\n", page_size);
 
-        // Skip next 84 bytes ie. DB Header (100 total along with already skipped 16 bytes)
-        fseek(database_file, 84, SEEK_CUR);
+        // Skip next 82 bytes ie. DB Header (100 total along with already skipped 18 bytes)
+        fseek(database_file, 82, SEEK_CUR);
 
         // Next 8 to 12 bytes are b-tree page headers
         // At offset 3, the 2 byte integer gives number of cells on the page
         // Since this b-tree is the internal sqlite_schema table, the number of rows is the number of tables (if only tables in DB)
         fseek(database_file, 3, SEEK_CUR);
+
         fread(buffer, 1, 2, database_file);
 
         unsigned short cell_count = (buffer[1] | (buffer[0] << 8));
