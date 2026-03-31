@@ -130,6 +130,54 @@ u64 getRecordSerialTypeSize(u64 value) {
 }
 
 /*
+ * Goes through a single record/cell/row in internal schema table to find the table name.
+ */
+void printTableInCell(FILE* db_file) {
+    // read varint to get record size
+    // read all column size data/2complements
+    // parse record body
+
+    ParseVarintResult varint;
+
+    // Read size of the record / cell
+    varint = parseVarint(db_file);
+    u64 record_size = varint.value;
+
+    // Read rowid (not used)
+    parseVarint(db_file);
+
+    // Read record header size
+    varint = parseVarint(db_file);
+    u64 record_hdr_size = varint.value - 1;
+
+    u64* col_sizes = malloc(record_hdr_size * sizeof(long)); // this is fine since for schema table this wont be that long
+    u64 col_len = 0;
+
+    while (record_hdr_size > 0) {
+        varint = parseVarint(db_file);
+
+        *(col_sizes + col_len) = getRecordSerialTypeSize(varint.value);
+        col_len += 1;
+
+        record_hdr_size -= varint.byte_span;
+    }
+
+    u64 tbl_name_size = *(col_sizes + 2);
+    char* table_name = malloc(tbl_name_size * sizeof(char));
+    for (int i = 0; i < col_len; i++) {
+        u64 col_size = *(col_sizes + i);
+
+        if (i != 2){
+            fseek(db_file, col_size, SEEK_CUR);
+        } else {
+            fread(table_name, 1, tbl_name_size, db_file);
+        }
+    }
+
+    printf("%s ", table_name);
+}
+
+/*
  * Runs .tables command, prints all tables in the DB and returns the usual return code.
  */
 int runTablesCmd(const char* db_file_path) {
@@ -150,59 +198,27 @@ int runTablesCmd(const char* db_file_path) {
 
     u16 cell_count = (buffer[1]) | (buffer[0] << 8);
 
-    // Read next 2 bytes to get address of cell content area
-    fread(buffer, 1, 2, database_file);
-    u16 cell_content_addr = buffer[1] | (buffer[0] << 8);
+    fseek(database_file, 3, SEEK_CUR); // Skip 3 bytes to skip header and reach cell ptr array
 
-    // Seek to address from start of the page
-    if (cell_content_addr == 0) {
-        fseek(database_file, 65536, SEEK_SET);
-    } else {
-        fseek(database_file, cell_content_addr, SEEK_SET);
+    u16* cell_content_addrs = malloc(cell_count * sizeof(u16));
+    for (int i = 0; i < cell_count; i++) {
+        // Read next 2 bytes to get address of cell content area
+        fread(buffer, 1, 2, database_file);
+        *(cell_content_addrs + i) = buffer[1] | (buffer[0] << 8);
     }
 
-    // read varint to get record size
-    // read all column size data/2complements
-    // parse record body
-
-    ParseVarintResult varint;
-
-    // Read size of the record / cell
-    varint = parseVarint(database_file);
-    u64 record_size = varint.value;
-
-    // Read rowid (not used)
-    parseVarint(database_file);
-
-    // Read record header size
-    varint = parseVarint(database_file);
-    u64 record_hdr_size = varint.value - 1;
-
-    u64* col_sizes = malloc(record_hdr_size * sizeof(long)); // this is fine since for schema table this wont be that long
-    u64 col_len = 0;
-
-    while (record_hdr_size > 0) {
-        varint = parseVarint(database_file);
-
-        *(col_sizes + col_len) = getRecordSerialTypeSize(varint.value);
-        col_len += 1;
-
-        record_hdr_size -= varint.byte_span;
-    }
-
-    u64 tbl_name_size = *(col_sizes + 2);
-    char* table_name = malloc(tbl_name_size * sizeof(char));
-    for (int i = 0; i < col_len; i++) {
-        u64 col_size = *(col_sizes + i);
-
-        if (i != 2){
-            fseek(database_file, col_size, SEEK_CUR);
+    for (int i = 0; i < cell_count; i++) {
+        // Seek to address from start of the page
+        u16 cell_content_addr = *(cell_content_addrs + i);
+        if (cell_content_addr == 0) {
+            fseek(database_file, 65536, SEEK_SET);
         } else {
-            fread(table_name, 1, tbl_name_size, database_file);
+            fseek(database_file, cell_content_addr, SEEK_SET);
         }
-    }
 
-    printf("%s\n", table_name);
+        printTableInCell(database_file);
+    }
+    printf("\n");
 
     fclose(database_file);
     return 0;
