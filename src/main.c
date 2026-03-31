@@ -2,16 +2,26 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-typedef unsigned short u8;
+typedef unsigned char u8;
+typedef unsigned short u16;
+typedef unsigned long u64;
 
 typedef struct _ParseVarintResult {
-    long value;
-    int byte_span;
+    u64 value;
+    u8 byte_span;
 } ParseVarintResult;
 
+/*
+ * Parses varint as described by sqlite docs, given a file pointer with pointer set to position where varint needs to be derived.
+ * Varints are 1 - 9 bytes. For the first 8 bytes Most Significant Bit of each byte is either 1 or 0, where 1 signals that sequence is not finished.
+ * 0 signals the end of the sequence. The 9th byte uses all 8 bits. Max int covered is 8bytes.
+ *
+ * Note: This parses with the assumption that bytes are arranged in Big-Endian order.
+ */
 ParseVarintResult parseVarint(FILE* db_file) {
     // read 1 to 9 bytes
-    long result = 0;
+    u64 result = 0;
+
     u8 cur_byte[1];
     u8 i = 9;
     while (i > 0) {
@@ -24,9 +34,11 @@ ParseVarintResult parseVarint(FILE* db_file) {
             break;
         }
 
-        // Add Least significant 7 bits to the overall value
-        result <<= 7; // move result 7 bytes to append the next 7 bytes
+        // move result 7 bytes to append the next 7 bytes
         // Note: 0 bit shifted is still 0 so initial case is fine
+        result <<= 7;
+
+        // Add Least significant 7 bits to the overall value
         result |= (cur_byte[0] & 0x7F); // 0x7F is 01111111; doing & will remove the last bit
 
         if ( !( cur_byte[0] & ( 1 << 7 ) ) ) {
@@ -42,9 +54,11 @@ ParseVarintResult parseVarint(FILE* db_file) {
     res.value = result;
     res.byte_span = 10-i;
     return res;
-
 }
 
+/*
+ * Runs .dbinfo dot command, prints the DB info and returns the usual return code.
+ */
 int runDbInfoCmd(const char* db_file_path) {
     FILE* database_file = fopen(db_file_path, "rb");
     if (!database_file) {
@@ -56,11 +70,11 @@ int runDbInfoCmd(const char* db_file_path) {
     fseek(database_file, 16, SEEK_SET);
 
     // Read next 2 bytes to get page size
-    unsigned char buffer[2];
+    u8 buffer[2];
 
     // Note: fread also skips bytes (like fseek), take this into account
     fread(buffer, 1, 2, database_file);
-    u8 page_size = (buffer[1] | (buffer[0] << 8)); // big endian
+    u16 page_size = (buffer[1] | (buffer[0] << 8)); // big endian
 
     printf("database page size: %u\n", page_size);
 
@@ -74,7 +88,7 @@ int runDbInfoCmd(const char* db_file_path) {
 
     fread(buffer, 1, 2, database_file);
 
-    u8 cell_count = (buffer[1] | (buffer[0] << 8));
+    u16 cell_count = (buffer[1] | (buffer[0] << 8));
 
     printf("number of tables: %u\n", cell_count);
 
@@ -82,6 +96,42 @@ int runDbInfoCmd(const char* db_file_path) {
     return 0;
 }
 
+u64 getRecordSerialTypeSize(u64 value) {
+    switch (value) {
+        case 0:
+            return 0;
+        case 1:
+            return 1;
+        case 2:
+            return 2;
+        case 3:
+            return 3;
+        case 4:
+            return 4;
+        case 5:
+            return 6;
+        case 6:
+            return 8;
+        case 7:
+            return 8;
+        case 8:
+        case 9:
+            return 0;
+        case 10:
+        case 11:
+            return 0; // reserved by sqlite, I assume this is never used in my usecases
+    }
+
+    if (value % 2 == 0) {
+        return (value - 12) / 2;
+    } else {
+        return (value - 13) / 2;
+    }
+}
+
+/*
+ * Runs .tables command, prints all tables in the DB and returns the usual return code.
+ */
 int runTablesCmd(const char* db_file_path) {
     FILE* database_file = fopen(db_file_path, "rb");
     if (!database_file) {
@@ -95,14 +145,14 @@ int runTablesCmd(const char* db_file_path) {
     // Go to offset 3 to get cell count
     fseek(database_file, 3, SEEK_CUR);
 
-    unsigned char buffer[2];
+    u8 buffer[2];
     fread(buffer, 1, 2, database_file);
 
-    u8 cell_count = (buffer[1]) | (buffer[0] << 8);
+    u16 cell_count = (buffer[1]) | (buffer[0] << 8);
 
     // Read next 2 bytes to get address of cell content area
     fread(buffer, 1, 2, database_file);
-    u8 cell_content_addr = buffer[1] | (buffer[0] << 8);
+    u16 cell_content_addr = buffer[1] | (buffer[0] << 8);
 
     // Seek to address from start of the page
     if (cell_content_addr == 0) {
@@ -115,6 +165,44 @@ int runTablesCmd(const char* db_file_path) {
     // read all column size data/2complements
     // parse record body
 
+    ParseVarintResult varint;
+
+    // Read size of the record / cell
+    varint = parseVarint(database_file);
+    u64 record_size = varint.value;
+
+    // Read rowid (not used)
+    parseVarint(database_file);
+
+    // Read record header size
+    varint = parseVarint(database_file);
+    u64 record_hdr_size = varint.value - 1;
+
+    u64* col_sizes = malloc(record_hdr_size * sizeof(long)); // this is fine since for schema table this wont be that long
+    u64 col_len = 0;
+
+    while (record_hdr_size > 0) {
+        varint = parseVarint(database_file);
+
+        *(col_sizes + col_len) = getRecordSerialTypeSize(varint.value);
+        col_len += 1;
+
+        record_hdr_size -= varint.byte_span;
+    }
+
+    u64 tbl_name_size = *(col_sizes + 2);
+    char* table_name = malloc(tbl_name_size * sizeof(char));
+    for (int i = 0; i < col_len; i++) {
+        u64 col_size = *(col_sizes + i);
+
+        if (i != 2){
+            fseek(database_file, col_size, SEEK_CUR);
+        } else {
+            fread(table_name, 1, tbl_name_size, database_file);
+        }
+    }
+
+    printf("%s\n", table_name);
 
     fclose(database_file);
     return 0;
