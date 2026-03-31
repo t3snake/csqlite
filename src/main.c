@@ -2,8 +2,51 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+typedef unsigned short u8;
+
+typedef struct _ParseVarintResult {
+    long value;
+    int byte_span;
+} ParseVarintResult;
+
+ParseVarintResult parseVarint(FILE* db_file) {
+    // read 1 to 9 bytes
+    long result = 0;
+    u8 cur_byte[1];
+    u8 i = 9;
+    while (i > 0) {
+        fread(cur_byte, 1, 1, db_file);
+
+        if (i == 1) {
+            // Note: This runs only when varint is 9 bytes long
+            result <<= 8; // this is the 9th byte so shift 8 bits to append the next 8
+            result |= cur_byte[0];
+            break;
+        }
+
+        // Add Least significant 7 bits to the overall value
+        result <<= 7; // move result 7 bytes to append the next 7 bytes
+        // Note: 0 bit shifted is still 0 so initial case is fine
+        result |= (cur_byte[0] & 0x7F); // 0x7F is 01111111; doing & will remove the last bit
+
+        if ( !( cur_byte[0] & ( 1 << 7 ) ) ) {
+            // Case MSB is not set, ie stop processing more bytes
+            // Note: This only run for 1 to 8 byte long varints
+            break;
+        }
+
+        i--;
+    }
+
+    ParseVarintResult res;
+    res.value = result;
+    res.byte_span = 10-i;
+    return res;
+
+}
+
 int runDbInfoCmd(const char* db_file_path) {
-    FILE *database_file = fopen(db_file_path, "rb");
+    FILE* database_file = fopen(db_file_path, "rb");
     if (!database_file) {
         fprintf(stderr, "Failed to open the database file\n");
         return 1;
@@ -17,7 +60,7 @@ int runDbInfoCmd(const char* db_file_path) {
 
     // Note: fread also skips bytes (like fseek), take this into account
     fread(buffer, 1, 2, database_file);
-    unsigned short page_size = (buffer[1] | (buffer[0] << 8)); // big endian
+    u8 page_size = (buffer[1] | (buffer[0] << 8)); // big endian
 
     printf("database page size: %u\n", page_size);
 
@@ -31,7 +74,7 @@ int runDbInfoCmd(const char* db_file_path) {
 
     fread(buffer, 1, 2, database_file);
 
-    unsigned short cell_count = (buffer[1] | (buffer[0] << 8));
+    u8 cell_count = (buffer[1] | (buffer[0] << 8));
 
     printf("number of tables: %u\n", cell_count);
 
@@ -40,7 +83,7 @@ int runDbInfoCmd(const char* db_file_path) {
 }
 
 int runTablesCmd(const char* db_file_path) {
-    FILE *database_file = fopen(db_file_path, "rb");
+    FILE* database_file = fopen(db_file_path, "rb");
     if (!database_file) {
         fprintf(stderr, "Failed to open the database file\n");
         return 1;
@@ -55,11 +98,11 @@ int runTablesCmd(const char* db_file_path) {
     unsigned char buffer[2];
     fread(buffer, 1, 2, database_file);
 
-    unsigned short cell_count = (buffer[1]) | (buffer[0] << 8);
+    u8 cell_count = (buffer[1]) | (buffer[0] << 8);
 
     // Read next 2 bytes to get address of cell content area
     fread(buffer, 1, 2, database_file);
-    unsigned short cell_content_addr = buffer[1] | (buffer[0] << 8);
+    u8 cell_content_addr = buffer[1] | (buffer[0] << 8);
 
     // Seek to address from start of the page
     if (cell_content_addr == 0) {
@@ -67,6 +110,10 @@ int runTablesCmd(const char* db_file_path) {
     } else {
         fseek(database_file, cell_content_addr, SEEK_SET);
     }
+
+    // read varint to get record size
+    // read all column size data/2complements
+    // parse record body
 
 
     fclose(database_file);
