@@ -133,10 +133,6 @@ u64 getRecordSerialTypeSize(u64 value) {
  * Goes through a single record/cell/row in internal schema table to find the table name.
  */
 void printTableInCell(FILE* db_file) {
-    // read varint to get record size
-    // read all column size data/2complements
-    // parse record body
-
     ParseVarintResult varint;
 
     // Read size of the record / cell
@@ -175,6 +171,10 @@ void printTableInCell(FILE* db_file) {
     }
 
     printf("%s ", table_name);
+
+    free(col_sizes);
+    free(table_name);
+
 }
 
 /*
@@ -220,8 +220,72 @@ int runTablesCmd(const char* db_file_path) {
     }
     printf("\n");
 
+    free(cell_content_addrs);
+
     fclose(database_file);
     return 0;
+}
+
+typedef struct _ParseQueryResult {
+    char* sql_cmd;
+    char* table;
+    char** props;
+    u8 prop_len;
+} ParseQueryResult;
+
+ParseQueryResult parseQuery(char* query) {
+    ParseQueryResult result;
+
+    u8 temp_len = 0;
+    u8 word_index = 0;
+    char* temp_word = malloc(100 * sizeof(char));
+
+    result.props = (char**)malloc(100 * sizeof(int)); // upto 100 properties. need more?
+
+    for (int i=0; i < strlen(query); i++) {
+        char cur_char = *(query + i);
+        if (cur_char == ' ') {
+            if (word_index == 0) {
+                memcpy(result.sql_cmd, temp_word, temp_len);
+                temp_len = 0;
+            } else if (word_index == 1) {
+                // TODO comma specific handling
+                result.props[0] = (char*)malloc(temp_len);
+                memcpy(result.props[0], temp_word, temp_len);
+                temp_len = 0;
+
+            }
+            word_index++;
+            continue;
+        }
+        *(temp_word + temp_len) = cur_char;
+        temp_len++;
+
+    }
+}
+
+int runSelectQuery(const char* db_file_path, const char* query) {
+    u8 temp_len;
+    char* sql_cmd;
+    char* table;
+    char* props[100];
+    u8 prop_len;
+
+    FILE* database_file = fopen(db_file_path, "rb");
+    if (!database_file) {
+        fprintf(stderr, "Failed to open the database file\n");
+        return 1;
+    }
+
+    // Get page size
+    fseek(database_file, 16, SEEK_SET);
+
+    u8 buffer[2];
+    fread(buffer, 1, 2, database_file);
+    u16 page_size = (buffer[1] | (buffer[0] << 8));
+
+    // Find table in schema table
+
 }
 
 int main(int argc, char *argv[]) {
@@ -242,8 +306,13 @@ int main(int argc, char *argv[]) {
         int retcode = runTablesCmd(database_file_path);
         return retcode;
     } else {
-        fprintf(stderr, "Unknown command %s\n", command);
-        return 1;
+        if (strncmp(command, "SELECT", 6)) {
+            // select stm
+            int retcode = runSelectQuery(database_file_path, command);
+        } else {
+            fprintf(stderr, "Unknown command %s\n", command);
+            return 1;
+        }
     }
 
     return 0;
