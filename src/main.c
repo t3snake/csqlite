@@ -129,10 +129,17 @@ u64 getRecordSerialTypeSize(u64 value) {
     }
 }
 
+typedef struct _SchemaInfo {
+    char* table_name;
+    u16 root_page;
+} SchemaInfo;
+
 /*
- * Goes through a single record/cell/row in internal schema table to find the table name.
+ * Goes through a single record/cell/row in internal schema table and returns the table name and rootpage.
+ * Assumes that db_file is currently pointing at the start of record.
  */
-void printTableInCell(FILE* db_file) {
+SchemaInfo getSchemaInfo(FILE* db_file) {
+    SchemaInfo result;
     ParseVarintResult varint;
 
     // Read size of the record / cell
@@ -159,22 +166,63 @@ void printTableInCell(FILE* db_file) {
     }
 
     u64 tbl_name_size = *(col_sizes + 2);
-    char* table_name = malloc(tbl_name_size * sizeof(char));
+    u64 rootpage_size = *(col_sizes + 3);
+    result.table_name = malloc(tbl_name_size * sizeof(char));
     for (int i = 0; i < col_len; i++) {
         u64 col_size = *(col_sizes + i);
 
-        if (i != 2){
-            fseek(db_file, col_size, SEEK_CUR);
+        if (i == 2){
+            fread(result.table_name, 1, tbl_name_size, db_file);
+        } else if (i == 3) {
+            u8* rootpage_str;
+            fread(rootpage_str, 1, rootpage_size, db_file);
+            // TODO parse big endian int (reverse byte order and cast to appropriate int)
         } else {
-            fread(table_name, 1, tbl_name_size, db_file);
+            fseek(db_file, col_size, SEEK_CUR);
         }
     }
 
-    printf("%s ", table_name);
-
     free(col_sizes);
-    free(table_name);
+    return result;
+}
 
+/*
+ * Stores total count and offsets from start of the db file of all tables entries in sqlite_schema table.
+ */
+typedef struct _SqliteSchemaEntries {
+    u16 count;
+    u16* offsets;
+} SqliteSchemaEntries;
+
+/*
+ * Returns array of offsets for all tables in internal sqlite_schema table.
+ * It is responsibility of the caller to free the returned offsets in result.
+ * This also seeks the db file ptr.
+ */
+SqliteSchemaEntries getInternalSchemaTableRowAddr(FILE* db_file) {
+    // Skip DB header to reach B-Tree Page Header
+    fseek(db_file, 100, SEEK_SET);
+
+    // Go to offset 3 to get cell count
+    fseek(db_file, 3, SEEK_CUR);
+
+    u8 buffer[2];
+    fread(buffer, 1, 2, db_file);
+
+    u16 cell_count = (buffer[1]) | (buffer[0] << 8);
+    fseek(db_file, 3, SEEK_CUR); // Skip 3 bytes to skip header and reach cell ptr array
+
+    u16* cell_content_addrs = malloc(cell_count * sizeof(u16));
+    for (int i = 0; i < cell_count; i++) {
+        // Read next 2 bytes to get address of cell content area
+        fread(buffer, 1, 2, db_file);
+        *(cell_content_addrs + i) = buffer[1] | (buffer[0] << 8);
+    }
+
+    SqliteSchemaEntries entries;
+    entries.count = cell_count;
+    entries.offsets = cell_content_addrs;
+    return entries;
 }
 
 /*
@@ -187,40 +235,22 @@ int runTablesCmd(const char* db_file_path) {
         return 1;
     }
 
-    // Skip DB header to reach B-Tree Page Header
-    fseek(database_file, 100, SEEK_SET);
+    SqliteSchemaEntries entries = getInternalSchemaTableRowAddr(database_file);
 
-    // Go to offset 3 to get cell count
-    fseek(database_file, 3, SEEK_CUR);
-
-    u8 buffer[2];
-    fread(buffer, 1, 2, database_file);
-
-    u16 cell_count = (buffer[1]) | (buffer[0] << 8);
-
-    fseek(database_file, 3, SEEK_CUR); // Skip 3 bytes to skip header and reach cell ptr array
-
-    u16* cell_content_addrs = malloc(cell_count * sizeof(u16));
-    for (int i = 0; i < cell_count; i++) {
-        // Read next 2 bytes to get address of cell content area
-        fread(buffer, 1, 2, database_file);
-        *(cell_content_addrs + i) = buffer[1] | (buffer[0] << 8);
-    }
-
-    for (int i = 0; i < cell_count; i++) {
+    for (int i = 0; i < entries.count; i++) {
         // Seek to address from start of the page
-        u16 cell_content_addr = *(cell_content_addrs + i);
+        u16 cell_content_addr = *(entries.offsets + i);
         if (cell_content_addr == 0) {
             fseek(database_file, 65536, SEEK_SET);
         } else {
             fseek(database_file, cell_content_addr, SEEK_SET);
         }
 
-        printTableInCell(database_file);
+        printf("%s", getSchemaInfo(database_file));
     }
     printf("\n");
 
-    free(cell_content_addrs);
+    free(entries.offsets);
 
     fclose(database_file);
     return 0;
@@ -233,7 +263,7 @@ typedef struct _ParseQueryResult {
     u8 prop_len;
 } ParseQueryResult;
 
-ParseQueryResult parseQuery(char* query) {
+ParseQueryResult parseQuery(const char* query) {
     ParseQueryResult result;
 
     u8 temp_len = 0;
@@ -247,30 +277,26 @@ ParseQueryResult parseQuery(char* query) {
         if (cur_char == ' ') {
             if (word_index == 0) {
                 memcpy(result.sql_cmd, temp_word, temp_len);
-                temp_len = 0;
             } else if (word_index == 1) {
                 // TODO comma specific handling
                 result.props[0] = (char*)malloc(temp_len);
                 memcpy(result.props[0], temp_word, temp_len);
-                temp_len = 0;
-
+            } else if (word_index == 2) {
+                // TODO assert "from"
+            } else if (word_index == 3) {
+                memcpy(result.table, temp_word, temp_len);
             }
+            temp_len = 0;
             word_index++;
             continue;
         }
         *(temp_word + temp_len) = cur_char;
         temp_len++;
-
     }
+    return result;
 }
 
 int runSelectQuery(const char* db_file_path, const char* query) {
-    u8 temp_len;
-    char* sql_cmd;
-    char* table;
-    char* props[100];
-    u8 prop_len;
-
     FILE* database_file = fopen(db_file_path, "rb");
     if (!database_file) {
         fprintf(stderr, "Failed to open the database file\n");
@@ -284,8 +310,30 @@ int runSelectQuery(const char* db_file_path, const char* query) {
     fread(buffer, 1, 2, database_file);
     u16 page_size = (buffer[1] | (buffer[0] << 8));
 
-    // Find table in schema table
+    ParseQueryResult query_res = parseQuery(query);
 
+    // Find table in schema table
+    SqliteSchemaEntries entries = getInternalSchemaTableRowAddr(database_file);
+
+    for (int i = 0; i < entries.count; i++) {
+        u16 offset = *(entries.offsets + i);
+
+        if (offset == 0) {
+            fseek(database_file, 65536, SEEK_SET);
+        } else {
+            fseek(database_file, offset, SEEK_SET);
+        }
+
+        // check if entry is the table from query
+        // get rootpage back and seek page_size times rootpage
+        // get all rows in the page
+
+
+
+    }
+
+    free(entries.offsets);
+    fclose(database_file);
 }
 
 int main(int argc, char *argv[]) {
