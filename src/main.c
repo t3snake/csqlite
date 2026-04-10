@@ -1,10 +1,17 @@
+#include <stdint.h>
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
 
-typedef unsigned char u8;
-typedef unsigned short u16;
-typedef unsigned long u64;
+typedef uint8_t u8;
+typedef uint16_t u16;
+typedef uint32_t u32;
+typedef uint64_t u64;
+
+typedef int8_t s8;
+typedef int16_t s16;
+typedef int32_t s32;
+typedef int64_t s64;
 
 typedef struct _ParseVarintResult {
     u64 value;
@@ -54,6 +61,53 @@ ParseVarintResult parseVarint(FILE* db_file) {
     res.value = result;
     res.byte_span = 10-i;
     return res;
+}
+
+/*
+ * Parse Big-Endian stored bytes into a 64bit int, based on given size in bytes.
+ * Reverses byte order and gets int.
+ */
+s64 parseSqlInt(u8* big_end_bytes, u8 num_bytes) {
+    u8 begin = 0;
+    u8 end = num_bytes - 1;
+
+    u8* buffer;
+    if (num_bytes == 1 || num_bytes == 2 || num_bytes == 4 || num_bytes == 8) {
+        buffer = malloc(num_bytes);
+    } else if (num_bytes == 3) {
+        buffer = malloc(4);
+    } else if (num_bytes == 6) {
+        buffer = malloc(8);
+    } else {
+        fprintf(stderr, "Error while parsing int: Invalid number of bytes. Returning 0.\n");
+        return 0;
+    }
+
+    // reverse byte order
+    while (begin <= end) {
+        // replace begin and end
+        *(buffer + begin) = *(big_end_bytes + end);
+        *(buffer + end) = *(big_end_bytes + begin);
+        begin ++;
+        end --;
+    }
+
+    // cast to appropriate signed int ptr based on size and then convert value to s64
+    switch(num_bytes) {
+        case 1:
+            return (s64) (*( (s8*) buffer));
+        case 2:
+            return (s64) (*( (s16*) buffer));
+        case 3:
+        case 4:
+            return (s64) (*( (s32*) buffer));
+        case 5:
+        case 6:
+            return (*( (s64*) buffer));
+        default:
+            // should never happen since it was checked above already
+            return 0;
+    }
 }
 
 /*
@@ -131,7 +185,7 @@ u64 getRecordSerialTypeSize(u64 value) {
 
 typedef struct _SchemaInfo {
     char* table_name;
-    u16 root_page;
+    s64 root_page;
 } SchemaInfo;
 
 /*
@@ -174,9 +228,10 @@ SchemaInfo getSchemaInfo(FILE* db_file) {
         if (i == 2){
             fread(result.table_name, 1, tbl_name_size, db_file);
         } else if (i == 3) {
-            u8* rootpage_str;
-            fread(rootpage_str, 1, rootpage_size, db_file);
+            u8* rootpage_bytes;
+            fread(rootpage_bytes, 1, rootpage_size, db_file);
             // TODO parse big endian int (reverse byte order and cast to appropriate int)
+            result.root_page = parseSqlInt(rootpage_bytes, rootpage_size);
         } else {
             fseek(db_file, col_size, SEEK_CUR);
         }
@@ -246,7 +301,8 @@ int runTablesCmd(const char* db_file_path) {
             fseek(database_file, cell_content_addr, SEEK_SET);
         }
 
-        printf("%s", getSchemaInfo(database_file));
+        SchemaInfo info = getSchemaInfo(database_file);
+        printf("%s", info.table_name);
     }
     printf("\n");
 
@@ -325,15 +381,26 @@ int runSelectQuery(const char* db_file_path, const char* query) {
         }
 
         // check if entry is the table from query
+        SchemaInfo info = getSchemaInfo(database_file);
+        if (!strcmp(info.table_name, query_res.table)) {
+            continue;
+        }
         // get rootpage back and seek page_size times rootpage
+        fseek(database_file, page_size * (info.root_page - 1), SEEK_SET);
+
         // get all rows in the page
+        fseek(database_file, 3, SEEK_CUR); // go to offset 3 to get cell count of the b-tree page
 
+        fread(buffer, 1, 2, database_file);
+        u16 row_count = (buffer[1] | (buffer[0] << 8));
 
-
+        printf("%d", row_count);
     }
 
     free(entries.offsets);
     fclose(database_file);
+
+    return 0;
 }
 
 int main(int argc, char *argv[]) {
