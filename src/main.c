@@ -1,3 +1,4 @@
+#include <ctype.h>
 #include <stdint.h>
 #include <string.h>
 #include <stdio.h>
@@ -63,6 +64,16 @@ ParseVarintResult parseVarint(FILE* db_file) {
     return res;
 }
 
+char* toLowerCase(const char* str) {
+    u32 len = strlen(str);
+    char* result = malloc(len + 1);
+    for (int i = 0; i < len; i++) {
+        result[i] = tolower(str[i]);
+    }
+    result[len] = '\0';
+    return result;
+}
+
 /*
  * Parse Big-Endian stored bytes into a 64bit int, based on given size in bytes.
  * Reverses byte order and gets int.
@@ -71,17 +82,24 @@ s64 parseSqlInt(u8* big_end_bytes, u8 num_bytes) {
     u8 begin = 0;
     u8 end = num_bytes - 1;
 
-    u8* buffer;
-    if (num_bytes == 1 || num_bytes == 2 || num_bytes == 4 || num_bytes == 8) {
-        buffer = malloc(num_bytes);
-    } else if (num_bytes == 3) {
-        buffer = malloc(4);
-    } else if (num_bytes == 6) {
-        buffer = malloc(8);
-    } else {
-        fprintf(stderr, "Error while parsing int: Invalid number of bytes. Returning 0.\n");
-        return 0;
-    }
+    u8* buffer = calloc(8, sizeof(u8)); // 8byte to get s64 size, calloc for 0 initialization
+    // if (num_bytes == 1 || num_bytes == 2 || num_bytes == 4 || num_bytes == 8) {
+    //     // fprintf(stderr, "debug_info: malloc line 77\n");
+    //     buffer = calloc(num_bytes, sizeof(u8));
+
+    // } else if (num_bytes == 3) {
+    //     // printf("debug_info: malloc line 81\n");
+    //     buffer = calloc(4, 1);
+    // } else if (num_bytes == 5) {
+    //     // printf("debug_info: malloc line 81\n");
+    //     buffer = calloc(6, 1);
+    // } else if (num_bytes == 6) {
+    //     // printf("debug_info: malloc line 84\n");
+    //     buffer = calloc(8, 1);
+    // } else {
+    //     fprintf(stderr, "Error while parsing int: Invalid number of bytes. Returning 0.\n");
+    //     return 0;
+    // }
 
     // reverse byte order
     while (begin <= end) {
@@ -93,21 +111,30 @@ s64 parseSqlInt(u8* big_end_bytes, u8 num_bytes) {
     }
 
     // cast to appropriate signed int ptr based on size and then convert value to s64
+    s64 result;
     switch(num_bytes) {
         case 1:
-            return (s64) (*( (s8*) buffer));
+            result = *((s64*) buffer); // move to lowest
+            break;
         case 2:
-            return (s64) (*( (s16*) buffer));
+            result = *((s64*) buffer);
+            break;
         case 3:
         case 4:
-            return (s64) (*( (s32*) buffer));
+            result = *((s64*) buffer);
+            break;
         case 5:
         case 6:
-            return (*( (s64*) buffer));
+            result = *((s64*) buffer);
+            break;
         default:
             // should never happen since it was checked above already
-            return 0;
+            result = 0;
+            break;
     }
+
+    free(buffer);
+    return result;
 }
 
 /*
@@ -207,7 +234,8 @@ SchemaInfo getSchemaInfo(FILE* db_file) {
     varint = parseVarint(db_file);
     u64 record_hdr_size = varint.value - 1;
 
-    u64* col_sizes = malloc(record_hdr_size * sizeof(long)); // this is fine since for schema table this wont be that long
+    // printf("debug_info: malloc line 223\n");
+    u64* col_sizes = malloc(100 * sizeof(u64)); // this is fine since for schema table this wont be that long
     u64 col_len = 0;
 
     while (record_hdr_size > 0) {
@@ -221,17 +249,20 @@ SchemaInfo getSchemaInfo(FILE* db_file) {
 
     u64 tbl_name_size = *(col_sizes + 2);
     u64 rootpage_size = *(col_sizes + 3);
-    result.table_name = malloc(tbl_name_size * sizeof(char));
+    fprintf(stderr, "debug_info: malloc line 238\n");
+    result.table_name = malloc((tbl_name_size + 1) * sizeof(char)); // additional for null byte
     for (int i = 0; i < col_len; i++) {
         u64 col_size = *(col_sizes + i);
 
         if (i == 2){
             fread(result.table_name, 1, tbl_name_size, db_file);
+            result.table_name[tbl_name_size] = '\0';
         } else if (i == 3) {
-            u8* rootpage_bytes;
+            u8* rootpage_bytes = malloc(rootpage_size);
             fread(rootpage_bytes, 1, rootpage_size, db_file);
-            // TODO parse big endian int (reverse byte order and cast to appropriate int)
+            fprintf(stderr, "parseSqlInt called.\n");
             result.root_page = parseSqlInt(rootpage_bytes, rootpage_size);
+            free(rootpage_bytes);
         } else {
             fseek(db_file, col_size, SEEK_CUR);
         }
@@ -267,6 +298,7 @@ SqliteSchemaEntries getInternalSchemaTableRowAddr(FILE* db_file) {
     u16 cell_count = (buffer[1]) | (buffer[0] << 8);
     fseek(db_file, 3, SEEK_CUR); // Skip 3 bytes to skip header and reach cell ptr array
 
+    // printf("debug_info: malloc line 285\n");
     u16* cell_content_addrs = malloc(cell_count * sizeof(u16));
     for (int i = 0; i < cell_count; i++) {
         // Read next 2 bytes to get address of cell content area
@@ -303,6 +335,9 @@ int runTablesCmd(const char* db_file_path) {
 
         SchemaInfo info = getSchemaInfo(database_file);
         printf("%s", info.table_name);
+        if (i < entries.count - 1) {
+            printf(" ");
+        }
     }
     printf("\n");
 
@@ -320,27 +355,39 @@ typedef struct _ParseQueryResult {
 } ParseQueryResult;
 
 ParseQueryResult parseQuery(const char* query) {
+    fprintf(stderr, "debug_info: parseQuery called\n");
     ParseQueryResult result;
+    result.sql_cmd = NULL;
+    result.props = NULL;
+    result.table = NULL;
+    result.prop_len = 0;
 
     u8 temp_len = 0;
     u8 word_index = 0;
-    char* temp_word = malloc(100 * sizeof(char));
+    // printf("debug_info: malloc line 343\n");
+    char* temp_word = malloc((strlen(query) + 1) * sizeof(char));
 
-    result.props = (char**)malloc(100 * sizeof(int)); // upto 100 properties. need more?
+    // printf("debug_info: malloc line 346\n");
+    result.props = (char**)malloc(100 * sizeof(char*)); // upto 100 properties. need more?
 
     for (int i=0; i < strlen(query); i++) {
         char cur_char = *(query + i);
         if (cur_char == ' ') {
+            if( (i >= 0) && *(query + i - 1) == ' '){
+                continue;
+            }
             if (word_index == 0) {
+                result.sql_cmd = malloc(temp_len + 1);
                 memcpy(result.sql_cmd, temp_word, temp_len);
+                result.sql_cmd[temp_len] = '\0';
             } else if (word_index == 1) {
                 // TODO comma specific handling
-                result.props[0] = (char*)malloc(temp_len);
+                // printf("debug_info: malloc line 356\n");
+                result.props[0] = (char*)malloc(temp_len + 1);
                 memcpy(result.props[0], temp_word, temp_len);
+                result.props[0][temp_len] = '\0';
             } else if (word_index == 2) {
                 // TODO assert "from"
-            } else if (word_index == 3) {
-                memcpy(result.table, temp_word, temp_len);
             }
             temp_len = 0;
             word_index++;
@@ -349,10 +396,19 @@ ParseQueryResult parseQuery(const char* query) {
         *(temp_word + temp_len) = cur_char;
         temp_len++;
     }
+
+    if (word_index == 3) {
+        result.table = malloc(temp_len + 1);
+        memcpy(result.table, temp_word, temp_len);
+        result.table[temp_len] = '\0';
+    }
+
+    free(temp_word);
     return result;
 }
 
 int runSelectQuery(const char* db_file_path, const char* query) {
+    fprintf(stderr, "debug_info: runSelectQuery called\n");
     FILE* database_file = fopen(db_file_path, "rb");
     if (!database_file) {
         fprintf(stderr, "Failed to open the database file\n");
@@ -369,6 +425,7 @@ int runSelectQuery(const char* db_file_path, const char* query) {
     ParseQueryResult query_res = parseQuery(query);
 
     // Find table in schema table
+    fprintf(stderr, "debug_info: getInternalSchemaTableRowAddr called\n");
     SqliteSchemaEntries entries = getInternalSchemaTableRowAddr(database_file);
 
     for (int i = 0; i < entries.count; i++) {
@@ -381,10 +438,20 @@ int runSelectQuery(const char* db_file_path, const char* query) {
         }
 
         // check if entry is the table from query
+        fprintf(stderr, "debug_info: getSchemaInfo called\n");
         SchemaInfo info = getSchemaInfo(database_file);
-        if (!strcmp(info.table_name, query_res.table)) {
+
+        char* lc_schema_tbl_name = toLowerCase(info.table_name);
+        char* lc_query_tbl_name = toLowerCase(query_res.table);
+        u8 cmp_res = strcmp(lc_schema_tbl_name, lc_query_tbl_name) != 0;
+        free(lc_query_tbl_name);
+        free(lc_schema_tbl_name);
+        if (cmp_res) {
+            fprintf(stderr, "debug_info: freeing info.table_name %s\n", info.table_name);
+            free(info.table_name);
             continue;
         }
+        fprintf(stderr, "debug_info: table name found.\n");
         // get rootpage back and seek page_size times rootpage
         fseek(database_file, page_size * (info.root_page - 1), SEEK_SET);
 
@@ -394,12 +461,26 @@ int runSelectQuery(const char* db_file_path, const char* query) {
         fread(buffer, 1, 2, database_file);
         u16 row_count = (buffer[1] | (buffer[0] << 8));
 
-        printf("%d", row_count);
+        fprintf(stderr, "debug_info: row count %d\n", row_count);
+        printf("%d\n", row_count);
+        free(info.table_name);
+        break;
+    }
+    if (query_res.props != NULL) {
+        free(query_res.props);
+    }
+    if (query_res.sql_cmd != NULL) {
+        free(query_res.sql_cmd);
+    }
+    if (query_res.table != NULL) {
+        free(query_res.table);
     }
 
-    free(entries.offsets);
-    fclose(database_file);
+    if (entries.offsets != NULL) {
+        free(entries.offsets);
+    }
 
+    fclose(database_file);
     return 0;
 }
 
@@ -421,9 +502,13 @@ int main(int argc, char *argv[]) {
         int retcode = runTablesCmd(database_file_path);
         return retcode;
     } else {
-        if (strncmp(command, "SELECT", 6)) {
+        char* lc_cmd = toLowerCase(command);
+        if (strncmp(lc_cmd, "select", 6) == 0) {
+
             // select stm
+            free(lc_cmd);
             int retcode = runSelectQuery(database_file_path, command);
+            return retcode;
         } else {
             fprintf(stderr, "Unknown command %s\n", command);
             return 1;
