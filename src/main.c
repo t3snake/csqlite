@@ -79,61 +79,11 @@ char* toLowerCase(const char* str) {
  * Reverses byte order and gets int.
  */
 s64 parseSqlInt(u8* big_end_bytes, u8 num_bytes) {
-    u8 begin = 0;
-    u8 end = num_bytes - 1;
-
-    u8* buffer = calloc(8, sizeof(u8)); // 8byte to get s64 size, calloc for 0 initialization
-    // if (num_bytes == 1 || num_bytes == 2 || num_bytes == 4 || num_bytes == 8) {
-    //     // fprintf(stderr, "debug_info: malloc line 77\n");
-    //     buffer = calloc(num_bytes, sizeof(u8));
-
-    // } else if (num_bytes == 3) {
-    //     // printf("debug_info: malloc line 81\n");
-    //     buffer = calloc(4, 1);
-    // } else if (num_bytes == 5) {
-    //     // printf("debug_info: malloc line 81\n");
-    //     buffer = calloc(6, 1);
-    // } else if (num_bytes == 6) {
-    //     // printf("debug_info: malloc line 84\n");
-    //     buffer = calloc(8, 1);
-    // } else {
-    //     fprintf(stderr, "Error while parsing int: Invalid number of bytes. Returning 0.\n");
-    //     return 0;
-    // }
-
-    // reverse byte order
-    while (begin <= end) {
-        // replace begin and end
-        *(buffer + begin) = *(big_end_bytes + end);
-        *(buffer + end) = *(big_end_bytes + begin);
-        begin ++;
-        end --;
+    s64 result = 0;
+    for (int i = 0; i < num_bytes; i++) {
+        result <<= 8;
+        result |= big_end_bytes[i];
     }
-
-    // cast to appropriate signed int ptr based on size and then convert value to s64
-    s64 result;
-    switch(num_bytes) {
-        case 1:
-            result = *((s64*) buffer); // move to lowest
-            break;
-        case 2:
-            result = *((s64*) buffer);
-            break;
-        case 3:
-        case 4:
-            result = *((s64*) buffer);
-            break;
-        case 5:
-        case 6:
-            result = *((s64*) buffer);
-            break;
-        default:
-            // should never happen since it was checked above already
-            result = 0;
-            break;
-    }
-
-    free(buffer);
     return result;
 }
 
