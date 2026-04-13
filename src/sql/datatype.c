@@ -1,9 +1,5 @@
 #include "datatype.h"
 
-/*
- * Parse Big-Endian stored bytes into a 64bit int, based on given size in bytes.
- * Reverses byte order and gets int.
- */
 s64 parseSqlInt(u8* big_end_bytes, u8 num_bytes) {
     s64 result = 0;
     for (int i = 0; i < num_bytes; i++) {
@@ -15,7 +11,7 @@ s64 parseSqlInt(u8* big_end_bytes, u8 num_bytes) {
 
 ParseVarintResult parseVarint(FILE* db_file) {
     // read 1 to 9 bytes
-    u64 result = 0;
+    s64 result = 0;
 
     u8 cur_byte[1];
     u8 i = 9;

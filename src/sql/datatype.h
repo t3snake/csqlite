@@ -15,7 +15,7 @@ typedef int32_t s32;
 typedef int64_t s64;
 
 typedef struct _ParseVarintResult {
-    u64 value;
+    s64 value;
     u8 byte_span;
 } ParseVarintResult;
 

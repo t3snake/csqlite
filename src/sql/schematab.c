@@ -30,26 +30,33 @@ SchemaInfo getSchemaInfo(FILE* db_file) {
         record_hdr_size -= varint.byte_span;
     }
 
-    u64 tbl_name_size = *(col_sizes + 2);
-    u64 rootpage_size = *(col_sizes + 3);
     fprintf(stderr, "debug_info: malloc line 238\n");
-    result.table_name = malloc((tbl_name_size + 1) * sizeof(char)); // additional for null byte
-    for (int i = 0; i < col_len; i++) {
+    int i = 0;
+    for ( ; i < col_len; i++) {
         u64 col_size = *(col_sizes + i);
 
         if (i == 2){
+            u64 tbl_name_size = *(col_sizes + 2);
+            result.table_name = malloc((tbl_name_size + 1) * sizeof(char)); // additional for null byte
             fread(result.table_name, 1, tbl_name_size, db_file);
             result.table_name[tbl_name_size] = '\0';
         } else if (i == 3) {
+            u64 rootpage_size = *(col_sizes + 3);
             u8* rootpage_bytes = malloc(rootpage_size);
             fread(rootpage_bytes, 1, rootpage_size, db_file);
             fprintf(stderr, "parseSqlInt called.\n");
             result.root_page = parseSqlInt(rootpage_bytes, rootpage_size);
             free(rootpage_bytes);
+        } else if (i == 4) {
+            u64 sql_stm_size = *(col_sizes + 4);
+            result.sql_create_stm = malloc((sql_stm_size + 1) * sizeof(char));
+            fread(result.sql_create_stm, 1, sql_stm_size, db_file);
+            result.sql_create_stm[sql_stm_size] = '\0';
         } else {
             fseek(db_file, col_size, SEEK_CUR);
         }
     }
+
 
     free(col_sizes);
     return result;

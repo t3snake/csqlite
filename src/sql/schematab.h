@@ -14,6 +14,7 @@
 typedef struct _SchemaInfo {
     char* table_name;
     s64 root_page;
+    char* sql_create_stm;
 } SchemaInfo;
 
 /*
