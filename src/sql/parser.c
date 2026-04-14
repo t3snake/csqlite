@@ -102,6 +102,7 @@ ColumnList parseCreateTblStmt(const char* statement) {
                 // we read "id" and "integer", and skip "primary" and "key"
                 // only starting reading column again on
                 is_reading_col_name = 1;
+                temp_len = 0;
             }
             if ((statement[i] == ' ' || statement[i] == ',' || statement[i] == ')') && is_reading_col_type) {
                 result.columns[result.num_columns].type = malloc(temp_len + 1);
@@ -138,7 +139,7 @@ ColumnList parseCreateTblStmt(const char* statement) {
     memcpy(final_result.columns, result.columns, result.num_columns * sizeof(ColumnData));
 
     // free only extra memory after num_columns since memcpy is copying the ptrs to ColumnData
-    for (int i = result.num_columns; i < result.num_columns; i++) {
+    for (int i = result.num_columns; i < 100; i++) {
         freeMacro(result.columns[i].name);
         freeMacro(result.columns[i].type);
     }
