@@ -38,6 +38,7 @@ ParseQueryResult parseQuery(const char* query) {
                 result.props[0] = (char*)malloc(temp_len + 1);
                 memcpy(result.props[0], temp_word, temp_len);
                 result.props[0][temp_len] = '\0';
+                result.prop_len++;
             } else if (word_index == 2) {
                 // TODO assert "from"
             }
@@ -79,6 +80,7 @@ ColumnList parseCreateTblStmt(const char* statement) {
 
         if (statement[i] == '(') {
             is_in_bracket = 1;
+            is_reading_col_name = 1;
             continue;
         }
 
@@ -94,6 +96,13 @@ ColumnList parseCreateTblStmt(const char* statement) {
                 temp_len = 0;
                 continue;
             }
+
+            if ( statement[i] == ',' ) {
+                // skips additional constraints eg: "id integer primary key"
+                // we read "id" and "integer", and skip "primary" and "key"
+                // only starting reading column again on
+                is_reading_col_name = 1;
+            }
             if ((statement[i] == ' ' || statement[i] == ',' || statement[i] == ')') && is_reading_col_type) {
                 result.columns[result.num_columns].type = malloc(temp_len + 1);
                 memcpy(result.columns[result.num_columns].type, temp_word, temp_len);
@@ -101,9 +110,12 @@ ColumnList parseCreateTblStmt(const char* statement) {
 
                 result.num_columns++;
 
-                is_reading_col_name = 1;
                 is_reading_col_type = 0;
                 temp_len = 0;
+
+                if ( statement[i] == ')' ) {
+                    break;
+                }
                 continue;
             }
 
@@ -115,16 +127,23 @@ ColumnList parseCreateTblStmt(const char* statement) {
 
     // cpy from 100 size column list to the exact size to not waste memory
     ColumnList final_result;
-    final_result.columns = malloc(result.num_columns * sizeof(ColumnData));
+    if (result.num_columns > 0) {
+        final_result.columns = malloc(result.num_columns * sizeof(ColumnData));
+    } else {
+        final_result.columns = NULL;
+    }
+
     final_result.num_columns = result.num_columns;
 
     memcpy(final_result.columns, result.columns, result.num_columns * sizeof(ColumnData));
 
-    for (int i = 0; i < result.num_columns; i++) {
+    // free only extra memory after num_columns since memcpy is copying the ptrs to ColumnData
+    for (int i = result.num_columns; i < result.num_columns; i++) {
         freeMacro(result.columns[i].name);
         freeMacro(result.columns[i].type);
     }
     freeMacro(result.columns);
+    freeMacro(temp_word);
 
     return final_result;
 }

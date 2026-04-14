@@ -145,10 +145,10 @@ int runSelectQuery(const char* db_file_path, const char* query) {
 
         fread(buffer, 1, 2, database_file);
         u16 row_count = (buffer[1] | (buffer[0] << 8));
+        fprintf(stderr, "debug_info: row count %d\n", row_count);
 
         char* count_star = query_res.prop_len >  0 ? toLowerCase(query_res.props[0]) : "";
-        if (query_res.prop_len > 0 && strcmp(count_star, "count(*)")) {
-            fprintf(stderr, "debug_info: row count %d\n", row_count);
+        if (query_res.prop_len > 0 && strcmp(count_star, "count(*)") == 0) {
             printf("%d\n", row_count);
             // TODO: with multiple properties to select, need to check if this is the last one to break
             break;
@@ -163,8 +163,11 @@ int runSelectQuery(const char* db_file_path, const char* query) {
             *(row_offsets + i) = buffer[1] | (buffer[0] << 8);
         }
 
+        fprintf(stderr, "debug_info: calling parseCreateTblStmt\n");
+        fprintf(stderr, "debug_info: %s\n", info.sql_create_stm);
         // parse sql create statement to get column order
         ColumnList col_list = parseCreateTblStmt(info.sql_create_stm);
+        fprintf(stderr, "debug_info: successfully parsed create statement");
 
         // TODO go over each row and get the required properties
         for(int i = 0; i < row_count; i++) {
@@ -196,6 +199,7 @@ int runSelectQuery(const char* db_file_path, const char* query) {
                 u64 col_size = col_sizes[j];
                 char* col_name = col_list.columns[j].name;
                 char* col_type = col_list.columns[j].type;
+                fprintf(stderr, "debug_info: column %s: %s\n", col_name, col_type);
 
                 // check if the column is present in select statement
                 if (strcmp(col_name, query_res.props[0]) != 0) {
@@ -209,7 +213,8 @@ int runSelectQuery(const char* db_file_path, const char* query) {
                     text[col_size] = '\0';
 
                     printf("%s\n", text);
-                } else if (strcmp(col_type, "int") == 0) {
+                } else if (strcmp(col_type, "int") == 0 ||
+                        strcmp(col_type, "integer") == 0) {
                     u8* bytes = malloc(col_size);
                     fread(bytes, 1, col_size, database_file);
 
