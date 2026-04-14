@@ -97,14 +97,6 @@ ColumnList parseCreateTblStmt(const char* statement) {
                 continue;
             }
 
-            if ( statement[i] == ',' ) {
-                // skips additional constraints eg: "id integer primary key"
-                // we read "id" and "integer", and skip "primary" and "key"
-                // only starting reading column again on
-                is_reading_col_name = 1;
-                temp_len = 0;
-                continue;
-            }
             if ((statement[i] == ' ' || statement[i] == ',' || statement[i] == ')') && is_reading_col_type) {
                 result.columns[result.num_columns].type = malloc(temp_len + 1);
                 memcpy(result.columns[result.num_columns].type, temp_word, temp_len);
@@ -117,7 +109,17 @@ ColumnList parseCreateTblStmt(const char* statement) {
 
                 if ( statement[i] == ')' ) {
                     break;
+                } else if ( statement[i] == ',' ) {
+                    is_reading_col_name = 1;
                 }
+                continue;
+            }
+            if ( statement[i] == ',' ) {
+                // skips additional constraints eg: "id integer primary key"
+                // we read "id" and "integer", and skip "primary" and "key"
+                // only starting reading column again on
+                is_reading_col_name = 1;
+                temp_len = 0;
                 continue;
             }
 
