@@ -35,9 +35,9 @@ typedef struct _SqliteSchemaEntries {
 SqliteSchemaEntries getSchemaTabRowAddr(FILE* db_file);
 
 /*
- * Goes through a single record/cell/row in internal schema table and returns the table name and rootpage.
+ * Goes through a single record/cell/row in internal schema table and returns the table name, rootpage and create sql statement.
  * Assumes that db_file is currently pointing at the start of record.
  */
-SchemaInfo getSchemaInfo(FILE* db_file);
+SchemaInfo getSchemaRowInfo(FILE* db_file);
 
 #endif

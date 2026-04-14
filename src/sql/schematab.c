@@ -2,7 +2,7 @@
 
 #include <stdlib.h>
 
-SchemaInfo getSchemaInfo(FILE* db_file) {
+SchemaInfo getSchemaRowInfo(FILE* db_file) {
     SchemaInfo result;
     ParseVarintResult varint;
 
@@ -30,12 +30,10 @@ SchemaInfo getSchemaInfo(FILE* db_file) {
         record_hdr_size -= varint.byte_span;
     }
 
-    fprintf(stderr, "debug_info: malloc line 238\n");
-    int i = 0;
-    for ( ; i < col_len; i++) {
+    for (int i = 0; i < col_len; i++) {
         u64 col_size = *(col_sizes + i);
 
-        if (i == 2){
+        if (i == 2) {
             u64 tbl_name_size = *(col_sizes + 2);
             result.table_name = malloc((tbl_name_size + 1) * sizeof(char)); // additional for null byte
             fread(result.table_name, 1, tbl_name_size, db_file);

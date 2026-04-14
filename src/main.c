@@ -71,7 +71,7 @@ int runTablesCmd(const char* db_file_path) {
             fseek(database_file, cell_content_addr, SEEK_SET);
         }
 
-        SchemaInfo info = getSchemaInfo(database_file);
+        SchemaInfo info = getSchemaRowInfo(database_file);
         printf("%s", info.table_name);
         if (i < entries.count - 1) {
             printf(" ");
@@ -103,7 +103,7 @@ int runSelectQuery(const char* db_file_path, const char* query) {
     ParseQueryResult query_res = parseQuery(query);
 
     // Find table in schema table
-    fprintf(stderr, "debug_info: getInternalSchemaTableRowAddr called\n");
+    fprintf(stderr, "debug_info: getSchemaTabRowAddr called\n");
     SqliteSchemaEntries entries = getSchemaTabRowAddr(database_file);
 
     for (int i = 0; i < entries.count; i++) {
@@ -116,25 +116,29 @@ int runSelectQuery(const char* db_file_path, const char* query) {
         }
 
         // check if entry is the table from query
-        fprintf(stderr, "debug_info: getSchemaInfo called\n");
-        SchemaInfo info = getSchemaInfo(database_file);
+        fprintf(stderr, "debug_info: getSchemaRowInfo called\n");
+        SchemaInfo info = getSchemaRowInfo(database_file);
 
         char* lc_schema_tbl_name = toLowerCase(info.table_name);
         char* lc_query_tbl_name = toLowerCase(query_res.table);
+
         u8 cmp_res = strcmp(lc_schema_tbl_name, lc_query_tbl_name) != 0;
+
         freeMacro(lc_query_tbl_name);
         freeMacro(lc_schema_tbl_name);
+
         if (cmp_res) {
             fprintf(stderr, "debug_info: freeing info.table_name %s\n", info.table_name);
 
             freeMacro(info.table_name);
             freeMacro(info.sql_create_stm);
-
             continue;
         }
+
         fprintf(stderr, "debug_info: table name found.\n");
+        s64 page_address = page_size * (info.root_page - 1);
         // get rootpage back and seek page_size times rootpage
-        fseek(database_file, page_size * (info.root_page - 1), SEEK_SET);
+        fseek(database_file, page_address, SEEK_SET);
 
         // get all rows in the page
         fseek(database_file, 3, SEEK_CUR); // go to offset 3 to get cell count of the b-tree page
@@ -159,9 +163,71 @@ int runSelectQuery(const char* db_file_path, const char* query) {
             *(row_offsets + i) = buffer[1] | (buffer[0] << 8);
         }
 
-        // TODO parse sql create statement to get column order
+        // parse sql create statement to get column order
+        ColumnList col_list = parseCreateTblStmt(info.sql_create_stm);
+
         // TODO go over each row and get the required properties
-        // TODO if property in select and in create statement print that.
+        for(int i = 0; i < row_count; i++) {
+            ParseVarintResult varint;
+
+            // Seek to row offset from beginning of the page to reach row.
+            s64 row_offset = page_address + row_offsets[i];
+            fseek(database_file, row_offset, SEEK_SET);
+
+            varint = parseVarint(database_file); // Size of record
+            u64 record_size = varint.value;
+
+            varint = parseVarint(database_file); // row id (not needed unless selected?)
+
+            varint = parseVarint(database_file); //record header size
+            u64 record_hdr_size = varint.value - 1; // subtracting size of itself
+
+            u64 col_len = col_list.num_columns;
+            u64* col_sizes = malloc(col_len * sizeof(u64)); // Assumption less than 100 columns
+
+            for (int j = 0; record_hdr_size > 0; j++) {
+                varint = parseVarint(database_file);
+
+                col_sizes[j] = getRecordSerialTypeSize(varint.value);
+                record_hdr_size -= varint.byte_span;
+            }
+
+            for (int j = 0; j < col_len; j++) {
+                u64 col_size = col_sizes[j];
+                char* col_name = col_list.columns[j].name;
+                char* col_type = col_list.columns[j].type;
+
+                // check if the column is present in select statement
+                if (strcmp(col_name, query_res.props[0]) != 0) {
+                    fseek(database_file, col_size, SEEK_CUR);
+                    continue;
+                }
+
+                if (strcmp(col_type, "text") == 0) {
+                    char* text = malloc((col_size + 1) * sizeof(char));
+                    fread(text, 1, col_size, database_file);
+                    text[col_size] = '\0';
+
+                    printf("%s\n", text);
+                } else if (strcmp(col_type, "int") == 0) {
+                    u8* bytes = malloc(col_size);
+                    fread(bytes, 1, col_size, database_file);
+
+                    s64 int_value = parseSqlInt(bytes, col_size);
+                    free(bytes);
+
+                    printf("%lld\n", int_value);
+                } else {
+                    fseek(database_file, col_size, SEEK_CUR);
+                }
+            }
+        }
+
+        for (int i = 0; i < col_list.num_columns; i++) {
+            freeMacro(col_list.columns[i].name);
+            freeMacro(col_list.columns[i].type);
+        }
+        freeMacro(col_list.columns);
 
         freeMacro(info.table_name);
         freeMacro(info.sql_create_stm);
