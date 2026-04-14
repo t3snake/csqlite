@@ -103,6 +103,7 @@ ColumnList parseCreateTblStmt(const char* statement) {
                 // only starting reading column again on
                 is_reading_col_name = 1;
                 temp_len = 0;
+                continue;
             }
             if ((statement[i] == ' ' || statement[i] == ',' || statement[i] == ')') && is_reading_col_type) {
                 result.columns[result.num_columns].type = malloc(temp_len + 1);
