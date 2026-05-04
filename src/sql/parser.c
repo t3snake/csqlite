@@ -19,35 +19,90 @@ ParseQueryResult parseQuery(const char* query) {
     // printf("debug_info: malloc line 343\n");
     char* temp_word = malloc((strlen(query) + 1) * sizeof(char));
 
-    // printf("debug_info: malloc line 346\n");
+    // If is currently parsing comma separated properties
+    u8 is_parsing_prop = 0;
+
+    // True if is parsing separator during processing of properties (sequence of space and comma)
+    u8 is_parsing_separator = 0;
+
+    // True if comma is encountered while processing separator (track in a sequence of space and comma)
+    // Default is_parsed_comma is 1 to handle the first property.
+    u8 is_parsed_comma = 1;
+
+    // True while parsing not space, non comma characters.
+    // This is used to not repeat the check at start of word.
+    u8 is_parsing_word = 0;
+
+    // fprintf(stderr, "debug_info: malloc line 27 parser.c\n");
     result.props = (char**)malloc(100 * sizeof(char*)); // upto 100 properties. need more?
 
     for (int i=0; i < strlen(query); i++) {
-        char cur_char = *(query + i);
-        if (cur_char == ' ') {
-            if( (i >= 0) && *(query + i - 1) == ' '){
-                continue;
+        char cur_char = query[i];
+
+        if (cur_char != ' ' && cur_char != ',') {
+            if ( is_parsing_prop ) {
+                if ( !is_parsing_word && !is_parsed_comma && result.prop_len != 0 ) {
+                    // While parsing properties if a space was encountered but a comma was not,
+                    // That means that parsing of properties has ended.
+                    // This is also true when parsing the 1st property so check if prop_len is not 0
+                    is_parsing_prop = 0;
+                    word_index++;
+                }
+
+                is_parsing_separator = 0;
+                is_parsed_comma = 0;
+                is_parsing_word = 1;
             }
-            if (word_index == 0) {
-                result.sql_command = malloc(temp_len + 1);
-                memcpy(result.sql_command, temp_word, temp_len);
-                result.sql_command[temp_len] = '\0';
-            } else if (word_index == 1) {
-                // TODO comma specific handling
-                // printf("debug_info: malloc line 356\n");
-                result.props[0] = (char*)malloc(temp_len + 1);
-                memcpy(result.props[0], temp_word, temp_len);
-                result.props[0][temp_len] = '\0';
-                result.prop_len++;
-            } else if (word_index == 2) {
-                // TODO assert "from"
-            }
-            temp_len = 0;
-            word_index++;
+
+            *(temp_word + temp_len) = cur_char;
+            temp_len++;
+
             continue;
         }
-        *(temp_word + temp_len) = cur_char;
-        temp_len++;
+
+        // space or comma case after this
+
+        if ( (i >= 0) && query[i-1] == ' ' ){
+            // multiple spaces case
+            continue;
+        }
+
+        if (is_parsing_prop) {
+            if (!is_parsing_separator) {
+                // printf("debug_info: malloc line 38 parser.c\n");
+                result.props[result.prop_len] = (char*)malloc(temp_len + 1);
+                memcpy(result.props[result.prop_len], temp_word, temp_len);
+                result.props[result.prop_len][temp_len] = '\0';
+                result.prop_len++;
+                temp_len = 0;
+            }
+
+            is_parsing_separator = 1;
+            is_parsing_word = 0;
+
+            if (cur_char == ',') {
+                is_parsed_comma = 1;
+            }
+
+            continue;
+        }
+
+
+        if (word_index == 0) {
+            result.sql_command = malloc(temp_len + 1);
+            memcpy(result.sql_command, temp_word, temp_len);
+            result.sql_command[temp_len] = '\0';
+            is_parsing_prop = 1;
+        } else if (word_index == 1) {
+            // This wont hit since parsing of comma separated props happens above
+        } else if (word_index == 2) {
+            // TODO assert "from"
+            is_parsing_prop = 0;
+        }
+
+        temp_len = 0;
+        word_index++;
+        continue;
     }
 
     if (word_index == 3) {
@@ -55,6 +110,12 @@ ParseQueryResult parseQuery(const char* query) {
         memcpy(result.table, temp_word, temp_len);
         result.table[temp_len] = '\0';
     }
+
+    // debug
+    for (int i=0; i < result.prop_len; i++) {
+        fprintf(stderr, "%s, ", result.props[i]);
+    }
+    fprintf(stderr, "\n");
 
     freeMacro(temp_word);
     return result;
