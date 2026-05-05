@@ -147,8 +147,8 @@ int runSelectQuery(const char* db_file_path, const char* query) {
         u16 row_count = (buffer[1] | (buffer[0] << 8));
         fprintf(stderr, "debug_info: row count %d\n", row_count);
 
-        char* count_star = query_res.prop_len >  0 ? toLowerCase(query_res.props[0]) : "";
-        if (query_res.prop_len > 0 && strcmp(count_star, "count(*)") == 0) {
+        char* property = query_res.prop_len >  0 ? toLowerCase(query_res.props[0]) : "";
+        if (query_res.prop_len > 0 && strcmp(property, "count(*)") == 0) {
             printf("%d\n", row_count);
             // TODO: with multiple properties to select, need to check if this is the last one to break
             break;
@@ -157,10 +157,10 @@ int runSelectQuery(const char* db_file_path, const char* query) {
         fseek(database_file, 3, SEEK_CUR); // skip 3 bytes to reach end of header and reach cell ptr array
 
         u16* row_offsets = malloc(row_count * sizeof(u16));
-        for (int i = 0; i < row_count; i++) {
+        for (int j = 0; j < row_count; j++) {
             // Read next 2 bytes to get address of cell content area
             fread(buffer, 1, 2, database_file);
-            *(row_offsets + i) = buffer[1] | (buffer[0] << 8);
+            *(row_offsets + j) = buffer[1] | (buffer[0] << 8);
         }
 
         fprintf(stderr, "debug_info: calling parseCreateTblStmt\n");
@@ -170,11 +170,11 @@ int runSelectQuery(const char* db_file_path, const char* query) {
         fprintf(stderr, "debug_info: successfully parsed create statement");
 
         // TODO go over each row and get the required properties
-        for(int i = 0; i < row_count; i++) {
+        for(int j = 0; j < row_count; j++) {
             ParseVarintResult varint;
 
             // Seek to row offset from beginning of the page to reach row.
-            s64 row_offset = page_address + row_offsets[i];
+            s64 row_offset = page_address + row_offsets[j];
             fseek(database_file, row_offset, SEEK_SET);
 
             varint = parseVarint(database_file); // Size of record
@@ -188,44 +188,73 @@ int runSelectQuery(const char* db_file_path, const char* query) {
             u64 col_len = col_list.num_columns;
             u64* col_sizes = malloc(col_len * sizeof(u64)); // Assumption less than 100 columns
 
-            for (int j = 0; record_hdr_size > 0; j++) {
+            for (int k = 0; record_hdr_size > 0; k++) {
                 varint = parseVarint(database_file);
 
-                col_sizes[j] = getRecordSerialTypeSize(varint.value);
+                col_sizes[k] = getRecordSerialTypeSize(varint.value);
                 record_hdr_size -= varint.byte_span;
             }
+            // Buffer of string to store values in order specified in query
+            char** val_to_print = malloc(query_res.prop_len * sizeof(char*));
 
-            for (int j = 0; j < col_len; j++) {
-                u64 col_size = col_sizes[j];
-                char* col_name = col_list.columns[j].name;
-                char* col_type = col_list.columns[j].type;
+            for (int k = 0; k < col_len; k++) {
+                // go over each column in the current row, order as stored in .db file
+                u64 col_size = col_sizes[k];
+                char* col_name = col_list.columns[k].name;
+                char* col_type = col_list.columns[k].type;
                 fprintf(stderr, "debug_info: column %s: %s\n", col_name, col_type);
 
-                // check if the column is present in select statement
-                if (strcmp(col_name, query_res.props[0]) != 0) {
-                    fseek(database_file, col_size, SEEK_CUR);
-                    continue;
+                u8 is_col_found = 0; // maintains search state in query properties and marks if found
+                for (int l = 0; l < query_res.prop_len; l++) {
+                    // check if the column is present in select statement
+                    if (strcmp(col_name, query_res.props[l]) != 0) {
+                        // not present
+                        // fseek(database_file, col_size, SEEK_CUR);
+                        continue;
+                    }
+
+                    // present
+                    fprintf(stderr, "debug info: present\n");
+                    is_col_found = 1;
+
+                    if (strcmp(col_type, "text") == 0) {
+                        char* text = malloc((col_size + 1) * sizeof(char));
+                        fread(text, 1, col_size, database_file);
+                        text[col_size] = '\0';
+
+                        val_to_print[l] = text;
+                    } else if (strcmp(col_type, "int") == 0 ||
+                            strcmp(col_type, "integer") == 0) {
+                        u8* bytes = malloc(col_size);
+                        fread(bytes, 1, col_size, database_file);
+
+                        s64 int_value = parseSqlInt(bytes, col_size);
+                        free(bytes);
+
+                        val_to_print[l] = malloc(100 * sizeof(char));
+                        sprintf(val_to_print[l], "%lld", int_value);
+                    } else {
+                        fseek(database_file, col_size, SEEK_CUR);
+                        val_to_print[l] = NULL;
+                    }
+                    // multiple of same column not possible with this approach, that would also
+                    // require turning back the seek so we can read the same bytes again.
+                    break;
                 }
-
-                if (strcmp(col_type, "text") == 0) {
-                    char* text = malloc((col_size + 1) * sizeof(char));
-                    fread(text, 1, col_size, database_file);
-                    text[col_size] = '\0';
-
-                    printf("%s\n", text);
-                } else if (strcmp(col_type, "int") == 0 ||
-                        strcmp(col_type, "integer") == 0) {
-                    u8* bytes = malloc(col_size);
-                    fread(bytes, 1, col_size, database_file);
-
-                    s64 int_value = parseSqlInt(bytes, col_size);
-                    free(bytes);
-
-                    printf("%lld\n", int_value);
-                } else {
+                if (!is_col_found) {
                     fseek(database_file, col_size, SEEK_CUR);
                 }
             }
+
+            for (int k = 0; k < query_res.prop_len; k++) {
+                printf("%s", val_to_print[k]);
+                if (k == query_res.prop_len - 1) {
+                    printf("\n");
+                } else {
+                    printf("|");
+                }
+            }
+
         }
 
         for (int i = 0; i < col_list.num_columns; i++) {

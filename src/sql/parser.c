@@ -1,10 +1,11 @@
+// #include <corecrt_search.h>
 #include <string.h>
 #include <stdlib.h>
 
 #include "parser.h"
 
 
-#define freeMacro(var_name) if (var_name != NULL) { free(var_name); }
+#define freeMacro(var_name) if (var_name != NULL) { free(var_name); var_name = NULL;}
 
 ParseQueryResult parseQuery(const char* query) {
     fprintf(stderr, "debug_info: parseQuery called\n");
@@ -123,7 +124,7 @@ ParseQueryResult parseQuery(const char* query) {
 
 ColumnList parseCreateTblStmt(const char* statement) {
     ColumnList result;
-    result.columns = malloc(100 * sizeof(ColumnData)); // assuming that there are not more than 100 properties
+    result.columns = (ColumnData*) malloc(100 * sizeof(ColumnData)); // assuming that there are not more than 100 properties
     // TODO: implement dynamic array
     result.num_columns = 0;
 
@@ -184,31 +185,12 @@ ColumnList parseCreateTblStmt(const char* statement) {
                 continue;
             }
 
-            // start reading columns
             temp_word[temp_len] = statement[i];
             temp_len++;
         }
     }
 
-    // cpy from 100 size column list to the exact size to not waste memory
-    ColumnList final_result;
-    if (result.num_columns > 0) {
-        final_result.columns = malloc(result.num_columns * sizeof(ColumnData));
-    } else {
-        final_result.columns = NULL;
-    }
-
-    final_result.num_columns = result.num_columns;
-
-    memcpy(final_result.columns, result.columns, result.num_columns * sizeof(ColumnData));
-
-    // free only extra memory after num_columns since memcpy is copying the ptrs to ColumnData
-    for (int i = result.num_columns; i < 100; i++) {
-        freeMacro(result.columns[i].name);
-        freeMacro(result.columns[i].type);
-    }
-    freeMacro(result.columns);
     freeMacro(temp_word);
 
-    return final_result;
+    return result;
 }
