@@ -5,15 +5,50 @@
 
 
 /*
+ * Represents a single Where condition.
+ *
+ * See: `parseQuery` method.
+ */
+typedef struct _WhereCondition {
+    // leftside of comparison, usually column name
+    char* l_col_name;
+    // comparator used
+    char* comparator;
+    // rightside of comparison, could be literal or another column
+    char* r_value;
+    // Type of r_value: literal string (0), integer (1), another column (2)
+    u8 r_value_mode;
+} WhereCondition;
+
+/*
+ * Represents the whole where clause as a tree.
+ * Leaf nodes are where conditions. They only have a valid WhereCondition other values are not to be used.
+ * Non leaf node represent `and` or `or` of 2 sub-trees with a left and right ptr.
+ *
+ * See: `parseQuery` method.
+ */
+typedef struct _WhereTree {
+    // Represents `and` (1) or `or` (2) of two different WhereConditions. (0) if node is a leaf node.
+    u8 node_andor;
+    // Representation of single where condition, only if leaf node. In this case there are no further left or right ptrs.
+    WhereCondition condition;
+    // Left sub tree. Null if leaf node.
+    struct _WhereTree* left;
+    // Right sub tree. Null if leaf node.
+    struct _WhereTree* right;
+} WhereTree;
+
+/*
  * Represents an SQL query string as a struct.
  *
  * See: `parseQuery` method.
  */
-typedef struct _ParseQueryResult {
+typedef struct {
     char* sql_command;
     char* table;
-    char** props;
-    u8 prop_len;
+    char** select_cols;
+    u8 select_col_len;
+    WhereTree* where_tree;
 } ParseQueryResult;
 
 /*
@@ -21,7 +56,7 @@ typedef struct _ParseQueryResult {
  *
  * See: `runSelectQuery` method.
  */
-typedef struct _SelectQueryResults {
+typedef struct {
 
     // return code as int
     int err;
@@ -29,19 +64,21 @@ typedef struct _SelectQueryResults {
 } SelectQueryResults;
 
 /*
- * Column name and type for SQLite.
+ * Name and type of a SQLite table column.
  *
  * See: `ColumnList` struct and `parseCreateTblStmt` method.
  */
-typedef struct _ColumnData {
+typedef struct {
     char* name;
     char* type;
 } ColumnData;
 
 /*
- * Holds list of column names
+ * Holds list of all column in a SQLite table.
+ *
+ * See: method `parseCreateTblStmt`
  */
-typedef struct _ColumnList {
+typedef struct {
     ColumnData* columns;
     u8 num_columns;
 } ColumnList;

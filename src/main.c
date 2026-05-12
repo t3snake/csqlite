@@ -147,8 +147,8 @@ int runSelectQuery(const char* db_file_path, const char* query) {
         u16 row_count = (buffer[1] | (buffer[0] << 8));
         fprintf(stderr, "debug_info: row count %d\n", row_count);
 
-        char* property = query_res.prop_len >  0 ? toLowerCase(query_res.props[0]) : "";
-        if (query_res.prop_len > 0 && strcmp(property, "count(*)") == 0) {
+        char* property = query_res.select_col_len >  0 ? toLowerCase(query_res.select_cols[0]) : "";
+        if (query_res.select_col_len > 0 && strcmp(property, "count(*)") == 0) {
             printf("%d\n", row_count);
             // TODO: with multiple properties to select, need to check if this is the last one to break
             break;
@@ -195,7 +195,7 @@ int runSelectQuery(const char* db_file_path, const char* query) {
                 record_hdr_size -= varint.byte_span;
             }
             // Buffer of string to store values in order specified in query
-            char** val_to_print = malloc(query_res.prop_len * sizeof(char*));
+            char** val_to_print = malloc(query_res.select_col_len * sizeof(char*));
 
             for (int k = 0; k < col_len; k++) {
                 // go over each column in the current row, order as stored in .db file
@@ -205,9 +205,9 @@ int runSelectQuery(const char* db_file_path, const char* query) {
                 fprintf(stderr, "debug_info: column %s: %s\n", col_name, col_type);
 
                 u8 is_col_found = 0; // maintains search state in query properties and marks if found
-                for (int l = 0; l < query_res.prop_len; l++) {
+                for (int l = 0; l < query_res.select_col_len; l++) {
                     // check if the column is present in select statement
-                    if (strcmp(col_name, query_res.props[l]) != 0) {
+                    if (strcmp(col_name, query_res.select_cols[l]) != 0) {
                         // not present
                         // fseek(database_file, col_size, SEEK_CUR);
                         continue;
@@ -246,9 +246,9 @@ int runSelectQuery(const char* db_file_path, const char* query) {
                 }
             }
 
-            for (int k = 0; k < query_res.prop_len; k++) {
+            for (int k = 0; k < query_res.select_col_len; k++) {
                 printf("%s", val_to_print[k]);
-                if (k == query_res.prop_len - 1) {
+                if (k == query_res.select_col_len - 1) {
                     printf("\n");
                 } else {
                     printf("|");
@@ -269,7 +269,7 @@ int runSelectQuery(const char* db_file_path, const char* query) {
         break;
     }
 
-    freeMacro(query_res.props);
+    freeMacro(query_res.select_cols);
     freeMacro(query_res.sql_command);
     freeMacro(query_res.table);
 
