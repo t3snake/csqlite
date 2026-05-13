@@ -53,7 +53,7 @@ ParseQueryResult parseQuery(const char* query) {
     // fprintf(stderr, "debug_info: malloc line 27 parser.c\n");
     result.select_cols = (char**) malloc(100 * sizeof(char*)); // upto 100 properties. need more?
 
-    result.where_tree = (WhereTree*) malloc(sizeof(WhereTree));
+    result.where_tree = NULL;
     result.where_tree->node_andor = 0;
     result.where_tree->left = 0;
     result.where_tree->right = 0;
@@ -193,6 +193,7 @@ ParseQueryResult parseQuery(const char* query) {
 
             char* lc_where = toLowerCase(where);
             assert(strcmp(lc_where, "where") == 0);
+            result.where_tree = (WhereTree*) malloc(sizeof(WhereTree));
             is_parsing_where = 1;
             where_parse_mode = 0;
 

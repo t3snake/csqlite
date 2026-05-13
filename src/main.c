@@ -236,62 +236,67 @@ int runSelectQuery(const char* db_file_path, const char* query) {
                 }
             }
 
-            // check if row satisfies where condition
-            // TODO where tree handling, currently assumes only one condition present at root
-            char* l_col_name = query_res.where_tree->condition.l_col_name;
-            char* r_col_name = NULL; // valid only if right side value represents column
+            u8 is_where_satisfied = 0; // is where condition satisfied for this row
 
-            char* literal_value = NULL; // valid only if right side value is int or string (not column)
+            if (query_res.where_tree != NULL) {
+                // check if row satisfies where condition
+                // TODO where tree handling, currently assumes only one condition present at root
+                char* l_col_name = query_res.where_tree->condition.l_col_name;
+                char* r_col_name = NULL; // valid only if right side value represents column
 
-            u8 is_r_col = (query_res.where_tree->condition.r_value_mode == 2);
-            if (is_r_col) {
-                r_col_name = query_res.where_tree->condition.r_value;
-            } else {
-                literal_value = query_res.where_tree->condition.r_value;
-            }
+                char* literal_value = NULL; // valid only if right side value is int or string (not column)
 
-            char* l_col_value = NULL;
-            char* r_col_value = NULL; // only valid if the right side value is a column and not literal
+                u8 is_r_col = (query_res.where_tree->condition.r_value_mode == 2);
+                if (is_r_col) {
+                    r_col_name = query_res.where_tree->condition.r_value;
+                } else {
+                    literal_value = query_res.where_tree->condition.r_value;
+                }
 
-            // get l_col and r_col (if relevant) values
-            for (int k = 0; k < col_len; k++) {
-                if (strcmp(l_col_name, col_names[k]) == 0) {
-                    l_col_value = col_print_vals[k];
-                    if (!is_r_col) {
-                        // only break if there is r_value is not a column, else continue search for r_col
-                        break;
+                char* l_col_value = NULL;
+                char* r_col_value = NULL; // only valid if the right side value is a column and not literal
+
+                // get l_col and r_col (if relevant) values
+                for (int k = 0; k < col_len; k++) {
+                    if (strcmp(l_col_name, col_names[k]) == 0) {
+                        l_col_value = col_print_vals[k];
+                        if (!is_r_col) {
+                            // only break if there is r_value is not a column, else continue search for r_col
+                            break;
+                        }
+                    }
+
+                    if (is_r_col && strcmp(r_col_name, col_names[k]) == 0) {
+                        r_col_value = col_print_vals[k];
                     }
                 }
 
-                if (is_r_col && strcmp(r_col_name, col_names[k]) == 0) {
-                    r_col_value = col_print_vals[k];
+                assert(l_col_value != NULL);
+
+
+                switch (query_res.where_tree->condition.r_value_mode) {
+                    case 0:
+                        // literal string
+                        assert(literal_value != NULL);
+                        is_where_satisfied = (strcmp(l_col_value, literal_value) == 0);
+                        break;
+
+                    case 1:
+                        assert(literal_value != NULL);
+                        is_where_satisfied = (strcmp(l_col_value, literal_value) == 0);
+                        break;
+
+                    case 2:
+                        assert(is_r_col && r_col_value != NULL);
+                        is_where_satisfied = (strcmp(l_col_value, r_col_value) == 0);
+                        break;
+
+                    default:
+                        // invalid r_value
+                        fprintf(stderr, "Invalid r_value_mode in WhereCondition %d", query_res.where_tree->condition.r_value_mode);
                 }
-            }
-
-            assert(l_col_value != NULL);
-
-            u8 is_where_satisfied = 0; // is where condition satisfied for this row
-
-            switch (query_res.where_tree->condition.r_value_mode) {
-                case 0:
-                    // literal string
-                    assert(literal_value != NULL);
-                    is_where_satisfied = (strcmp(l_col_value, literal_value) == 0);
-                    break;
-
-                case 1:
-                    assert(literal_value != NULL);
-                    is_where_satisfied = (strcmp(l_col_value, literal_value) == 0);
-                    break;
-
-                case 2:
-                    assert(is_r_col && r_col_value != NULL);
-                    is_where_satisfied = (strcmp(l_col_value, r_col_value) == 0);
-                    break;
-
-                default:
-                    // invalid r_value
-                    fprintf(stderr, "Invalid r_value_mode in WhereCondition %d", query_res.where_tree->condition.r_value_mode);
+            } else {
+                is_where_satisfied = 1;
             }
 
             if (!is_where_satisfied) {
