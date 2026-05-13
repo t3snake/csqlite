@@ -1,6 +1,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <assert.h>
 
 #include "sql/datatype.h"
 #include "sql/schematab.h"
@@ -194,67 +195,125 @@ int runSelectQuery(const char* db_file_path, const char* query) {
                 col_sizes[k] = getRecordSerialTypeSize(varint.value);
                 record_hdr_size -= varint.byte_span;
             }
-            // Buffer of string to store values in order specified in query
-            char** val_to_print = malloc(query_res.select_col_len * sizeof(char*));
 
+            // Buffer of string to store values which are sequentially stored in db file
+            char** col_print_vals = malloc(col_len * sizeof(char*));
+
+            // Buffer to store the col names in order stored in db file
+            char** col_names = malloc(col_len * sizeof(char*));
+
+            // store all column values of the row
+            // check where condition to see if the row should be skipped
+            // since where condition could be on any column: need not be in select and could be last row
+            // we have to go through all the columns
+            // TODO possible optimization => short circuit or/and of where condition
             for (int k = 0; k < col_len; k++) {
                 // go over each column in the current row, order as stored in .db file
                 u64 col_size = col_sizes[k];
                 char* col_name = col_list.columns[k].name;
                 char* col_type = col_list.columns[k].type;
-                fprintf(stderr, "debug_info: column %s: %s\n", col_name, col_type);
+                // fprintf(stderr, "debug_info: column %s: %s\n", col_name, col_type);
+                col_names[k] = col_name;
 
-                u8 is_col_found = 0; // maintains search state in query properties and marks if found
-                for (int l = 0; l < query_res.select_col_len; l++) {
-                    // check if the column is present in select statement
-                    if (strcmp(col_name, query_res.select_cols[l]) != 0) {
-                        // not present
-                        // fseek(database_file, col_size, SEEK_CUR);
-                        continue;
-                    }
+                if (strcmp(col_type, "text") == 0) {
+                    char* text = malloc((col_size + 1) * sizeof(char));
+                    fread(text, 1, col_size, database_file);
+                    text[col_size] = '\0';
 
-                    // present
-                    fprintf(stderr, "debug info: present\n");
-                    is_col_found = 1;
+                    col_print_vals[k] = text;
+                } else if (strcmp(col_type, "int") == 0 || strcmp(col_type, "integer") == 0) {
+                    u8* bytes = malloc(col_size);
+                    fread(bytes, 1, col_size, database_file);
 
-                    if (strcmp(col_type, "text") == 0) {
-                        char* text = malloc((col_size + 1) * sizeof(char));
-                        fread(text, 1, col_size, database_file);
-                        text[col_size] = '\0';
+                    s64 int_value = parseSqlInt(bytes, col_size);
+                    free(bytes);
 
-                        val_to_print[l] = text;
-                    } else if (strcmp(col_type, "int") == 0 ||
-                            strcmp(col_type, "integer") == 0) {
-                        u8* bytes = malloc(col_size);
-                        fread(bytes, 1, col_size, database_file);
-
-                        s64 int_value = parseSqlInt(bytes, col_size);
-                        free(bytes);
-
-                        val_to_print[l] = malloc(100 * sizeof(char));
-                        sprintf(val_to_print[l], "%lld", int_value);
-                    } else {
-                        fseek(database_file, col_size, SEEK_CUR);
-                        val_to_print[l] = NULL;
-                    }
-                    // multiple of same column not possible with this approach, that would also
-                    // require turning back the seek so we can read the same bytes again.
-                    break;
-                }
-                if (!is_col_found) {
+                    col_print_vals[k] = malloc(100 * sizeof(char));
+                    sprintf(col_print_vals[k], "%lld", int_value);
+                } else {
                     fseek(database_file, col_size, SEEK_CUR);
+                    col_print_vals[k] = NULL;
                 }
             }
 
+            // check if row satisfies where condition
+            // TODO where tree handling, currently assumes only one condition present at root
+            char* l_col_name = query_res.where_tree->condition.l_col_name;
+            char* r_col_name = NULL; // valid only if right side value represents column
+
+            char* literal_value = NULL; // valid only if right side value is int or string (not column)
+
+            u8 is_r_col = (query_res.where_tree->condition.r_value_mode == 2);
+            if (is_r_col) {
+                r_col_name = query_res.where_tree->condition.r_value;
+            } else {
+                literal_value = query_res.where_tree->condition.r_value;
+            }
+
+            char* l_col_value = NULL;
+            char* r_col_value = NULL; // only valid if the right side value is a column and not literal
+
+            // get l_col and r_col (if relevant) values
+            for (int k = 0; k < col_len; k++) {
+                if (strcmp(l_col_name, col_names[k]) == 0) {
+                    l_col_value = col_print_vals[k];
+                    if (!is_r_col) {
+                        // only break if there is r_value is not a column, else continue search for r_col
+                        break;
+                    }
+                }
+
+                if (is_r_col && strcmp(r_col_name, col_names[k]) == 0) {
+                    r_col_value = col_print_vals[k];
+                }
+            }
+
+            assert(l_col_value != NULL);
+
+            u8 is_where_satisfied = 0; // is where condition satisfied for this row
+
+            switch (query_res.where_tree->condition.r_value_mode) {
+                case 0:
+                    // literal string
+                    assert(literal_value != NULL);
+                    is_where_satisfied = (strcmp(l_col_value, literal_value) == 0);
+                    break;
+
+                case 1:
+                    assert(literal_value != NULL);
+                    is_where_satisfied = (strcmp(l_col_value, literal_value) == 0);
+                    break;
+
+                case 2:
+                    assert(is_r_col && r_col_value != NULL);
+                    is_where_satisfied = (strcmp(l_col_value, r_col_value) == 0);
+                    break;
+
+                default:
+                    // invalid r_value
+                    fprintf(stderr, "Invalid r_value_mode in WhereCondition %d", query_res.where_tree->condition.r_value_mode);
+            }
+
+            if (!is_where_satisfied) {
+                // go to next row
+                continue;
+            }
+
             for (int k = 0; k < query_res.select_col_len; k++) {
-                printf("%s", val_to_print[k]);
+                char* col_value;
+                for (int l = 0; l < col_len; l++) {
+                    if (strcmp(col_names[l], query_res.select_cols[k]) == 0) {
+                        col_value = col_print_vals[l];
+                    }
+                }
+                printf("%s", col_value);
+
                 if (k == query_res.select_col_len - 1) {
                     printf("\n");
                 } else {
                     printf("|");
                 }
             }
-
         }
 
         for (int i = 0; i < col_list.num_columns; i++) {

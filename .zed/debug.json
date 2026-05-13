@@ -8,7 +8,7 @@
     },
     "program": "$ZED_WORKTREE_ROOT/build/Debug/sqlite.exe",
     "request": "launch",
-    "args": ["sample.db", "SELECT one, two FROM tbl1"],
+    "args": ["sample.db", "SELECT one, two FROM tbl1 WHERE one = 'hello'"],
     "adapter": "CodeLLDB",
   },
 ]

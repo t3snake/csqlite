@@ -124,7 +124,7 @@ ParseQueryResult parseQuery(const char* query) {
                 result.where_tree->condition.comparator[temp_len] = '\0';
             } else if (where_parse_mode == 2) {
                 // literal or another column
-                if (temp_word[0] == '\'' && temp_word[temp_len] == '\'') {
+                if (temp_word[0] == '\'' && temp_word[temp_len - 1] == '\'') {
                     // if in 'quotes'
                     result.where_tree->condition.r_value_mode = 0;
                 } else if (isNum(temp_word[0])) {
@@ -167,7 +167,7 @@ ParseQueryResult parseQuery(const char* query) {
             from[temp_len] = '\0';
 
             char* lc_from = toLowerCase(from);
-            assert(strcmp(from, "from") == 0);
+            assert(strcmp(lc_from, "from") == 0);
 
             freeMacro(from);
             freeMacro(lc_from);
