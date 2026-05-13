@@ -127,18 +127,27 @@ ParseQueryResult parseQuery(const char* query) {
                 if (temp_word[0] == '\'' && temp_word[temp_len - 1] == '\'') {
                     // if in 'quotes'
                     result.where_tree->condition.r_value_mode = 0;
+
+                    result.where_tree->condition.r_value = (char*) malloc(temp_len + 1 - 2); // remove the quotes
+                    memcpy(result.where_tree->condition.r_value, (temp_word + 1), (temp_len - 1));
+                    result.where_tree->condition.r_value[temp_len - 2] = '\0';
                 } else if (isNum(temp_word[0])) {
                     // if is number
                     // assumption if digit starts with number, it cant be a var - assume it is num
                     result.where_tree->condition.r_value_mode = 1;
+
+                    result.where_tree->condition.r_value = (char*) malloc(temp_len + 1);
+                    memcpy(result.where_tree->condition.r_value, temp_word, temp_len);
+                    result.where_tree->condition.r_value[temp_len] = '\0';
                 } else {
                     // if a col_name
                     result.where_tree->condition.r_value_mode = 2;
+
+                    result.where_tree->condition.r_value = (char*) malloc(temp_len + 1);
+                    memcpy(result.where_tree->condition.r_value, temp_word, temp_len);
+                    result.where_tree->condition.r_value[temp_len] = '\0';
                 }
 
-                result.where_tree->condition.r_value = (char*) malloc(temp_len + 1);
-                memcpy(result.where_tree->condition.r_value, temp_word, temp_len);
-                result.where_tree->condition.r_value[temp_len] = '\0';
             }
 
             where_parse_mode = (where_parse_mode + 1) % 3;
@@ -183,7 +192,7 @@ ParseQueryResult parseQuery(const char* query) {
             where[temp_len] = '\0';
 
             char* lc_where = toLowerCase(where);
-            assert(strcmp(where, "where"));
+            assert(strcmp(lc_where, "where") == 0);
             is_parsing_where = 1;
             where_parse_mode = 0;
 

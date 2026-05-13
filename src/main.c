@@ -168,7 +168,7 @@ int runSelectQuery(const char* db_file_path, const char* query) {
         fprintf(stderr, "debug_info: %s\n", info.sql_create_stm);
         // parse sql create statement to get column order
         ColumnList col_list = parseCreateTblStmt(info.sql_create_stm);
-        fprintf(stderr, "debug_info: successfully parsed create statement");
+        fprintf(stderr, "debug_info: successfully parsed create statement\n");
 
         // TODO go over each row and get the required properties
         for(int j = 0; j < row_count; j++) {
