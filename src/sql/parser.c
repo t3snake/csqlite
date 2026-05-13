@@ -54,9 +54,6 @@ ParseQueryResult parseQuery(const char* query) {
     result.select_cols = (char**) malloc(100 * sizeof(char*)); // upto 100 properties. need more?
 
     result.where_tree = NULL;
-    result.where_tree->node_andor = 0;
-    result.where_tree->left = 0;
-    result.where_tree->right = 0;
 
     for (int i=0; i <= strlen(query); i++) { // <= len because will check \0 for last word handling
         char cur_char = query[i];
@@ -193,7 +190,12 @@ ParseQueryResult parseQuery(const char* query) {
 
             char* lc_where = toLowerCase(where);
             assert(strcmp(lc_where, "where") == 0);
+
             result.where_tree = (WhereTree*) malloc(sizeof(WhereTree));
+            result.where_tree->node_andor = 0;
+            result.where_tree->left = 0;
+            result.where_tree->right = 0;
+
             is_parsing_where = 1;
             where_parse_mode = 0;
 
