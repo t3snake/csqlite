@@ -6,9 +6,12 @@
       "args": ["--build", "./build"],
       "cwd": "$ZED_WORKTREE_ROOT",
     },
-    "program": "$ZED_WORKTREE_ROOT/build/Debug/sqlite.exe",
+    "program": "$ZED_WORKTREE_ROOT/build/sqlite",
     "request": "launch",
-    "args": ["sample.db", "SELECT one, two FROM tbl1 WHERE one = 'hello'"],
+    "args": [
+      "superheroes.db",
+      "SELECT id, name FROM superheroes WHERE eye_color = 'Pink Eyes'",
+    ],
     "adapter": "CodeLLDB",
   },
 ]
