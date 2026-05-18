@@ -1,5 +1,5 @@
-#ifndef SQLPARSER_H_INCLUDED // include guard
-#define SQLPARSER_H_INCLUDED
+#ifndef PARSER_H_INCLUDED // include guard
+#define PARSER_H_INCLUDED
 
 #include "datatype.h"
 
@@ -69,8 +69,9 @@ typedef struct {
  * See: `ColumnList` struct and `parseCreateTblStmt` method.
  */
 typedef struct {
-    char* name;
-    char* type;
+    char* name; // column name derived from create tbl statement
+    char* type; // column type derived from create tbl statement
+    char* value; // column value, filled later while reading row data
 } ColumnData;
 
 /*

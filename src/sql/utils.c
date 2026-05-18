@@ -4,6 +4,7 @@
 
 #include "utils.h"
 
+
 char* toLowerCase(const char* str) {
     u32 len = strlen(str);
     char* result = malloc(len + 1);
