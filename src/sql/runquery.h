@@ -24,6 +24,16 @@ typedef struct {
  */
 TableInfo seekToTable(FILE* db_file, char* table_name, u16 page_size);
 
+/*
+ * Crawls the B-Tree which can span multiple pages and prints out row if where condition is satisfied.
+ * Recursive function which expects db_file to be set to the appropriate page address.
+ * Returns standard retcode.
+ */
+int traverseBTree(FILE* db_file, ParseQueryResult query, s64 cur_pg_addr, ColumnList col_data, u16 page_size);
+
+/*
+ * Gives a bool (0 or 1) based on if where was satisfied for the current row values in cols.
+ */
 u8 isWhereSatisfied(WhereTree* where_tree, ColumnList cols);
 
 #endif

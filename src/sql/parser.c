@@ -50,6 +50,8 @@ ParseQueryResult parseQuery(const char* query) {
     // If true at end of parsing, means that the literal was not closed.
     u8 is_literal_where = 0;
 
+    u8 is_in_quotes = 0;
+
     // fprintf(stderr, "debug_info: malloc line 27 parser.c\n");
     result.select_cols = (char**) malloc(100 * sizeof(char*)); // upto 100 properties. need more?
 
@@ -58,7 +60,11 @@ ParseQueryResult parseQuery(const char* query) {
     for (int i=0; i <= strlen(query); i++) { // <= len because will check \0 for last word handling
         char cur_char = query[i];
 
-        if (cur_char != ' ' && cur_char != ',' && cur_char != '\0') {
+        if (is_parsing_where && cur_char == '\'') {
+			is_in_quotes = is_in_quotes ? 0 : 1; // toggle
+        }
+
+        if ((cur_char != ' ' && cur_char != ',' && cur_char != '\0') || (is_parsing_where && is_in_quotes)) {
             if ( is_parsing_prop ) {
                 if ( !is_parsing_word && !is_parsed_comma && result.select_col_len != 0 ) {
                     // While parsing properties if a space was encountered but a comma was not,

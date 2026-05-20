@@ -21,7 +21,7 @@ SchemaInfo getSchemaRowInfo(FILE* db_file) {
     u64* col_sizes = malloc(100 * sizeof(u64)); // this is fine since for schema table this wont be that long
     u64 col_len = 0;
 
-    while (record_hdr_size > 0) {
+    while (record_hdr_size > 0 && record_hdr_size < 10000) {
         varint = parseVarint(db_file);
 
         *(col_sizes + col_len) = getRecordSerialTypeSize(varint.value);
