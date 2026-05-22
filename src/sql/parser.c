@@ -1,3 +1,4 @@
+#include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <assert.h>
@@ -292,25 +293,26 @@ ColumnList parseCreateTblStmt(const char* statement) {
 
         if ( !is_reading_col_name && !is_reading_col_type ) {
             if ( statement[i] == ',' || statement[i] == ' ' || statement[i] == ')' ) {
-                // check if "primary" "key"
+                // check if "primary" or "key"
                 char* x = malloc(temp_len + 1);
                 memcpy(x, temp_word, temp_len);
                 x[temp_len] = '\0';
 
                 if (strcmp(x, "primary") == 0) {
                     is_read_primary = 1;
-                } else if (strcmp(x, "key") == 0 && is_read_primary) {
+                } else if (is_read_primary && (strcmp(x, "key") == 0)) {
                     result.primary_key_colname = last_read_colname;
+                    is_read_primary = 0;
+                    fprintf(stderr, "primary col name: %s\n", last_read_colname);
                 }
-            }
-            // dont continue - for last comma check
-        }
+                temp_len = 0;
 
-        if ( statement[i] == ',' ) {
-            // only starting reading column name again on reading comma
-            is_reading_col_name = 1;
-            temp_len = 0;
-            continue;
+                if ( statement[i] == ',' ) {
+                    // only starting reading column name again on reading comma
+                    is_reading_col_name = 1;
+                }
+                continue;
+            }
         }
 
         temp_word[temp_len] = statement[i];
