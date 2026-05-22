@@ -91,7 +91,7 @@ int runSelectQuery(const char* db_file_path, const char* query) {
     fprintf(stderr, "debug_info: runSelectQuery called\n");
     FILE* database_file = fopen(db_file_path, "rb");
     if (!database_file) {
-        fprintf(stderr, "Failed to open the database file\n");
+        fprintf(stderr, "Failed to open the database file: %s\n", db_file_path);
         return 1;
     }
 

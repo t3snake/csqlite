@@ -171,7 +171,8 @@ int traverseBTree(FILE* db_file, ParseQueryResult query, s64 cur_pg_addr, Column
 		varint = parseVarint(db_file); // Size of record
 		u64 record_size = varint.value;
 
-		varint = parseVarint(db_file); // row id (not needed unless selected?)
+		varint = parseVarint(db_file); // row id - required as value, if primary key
+		s64 row_id = varint.value;
 
 		varint = parseVarint(db_file); //record header size
 		u64 record_hdr_size = varint.value - 1; // subtracting size of itself
@@ -203,11 +204,17 @@ int traverseBTree(FILE* db_file, ParseQueryResult query, s64 cur_pg_addr, Column
 
 			    col_data.columns[j].value = text;
 			} else if (strcmp(col_type, "int") == 0 || strcmp(col_type, "integer") == 0) {
-			    u8* bytes = malloc(col_size);
-			    fread(bytes, 1, col_size, db_file);
+			    s64 int_value = 0;
+			    if (col_data.columns[j].name == col_data.primary_key_colname) {
+					// primary key case, value is not valid
+					int_value = row_id;
+				} else {
+                    u8* bytes = malloc(col_size);
+                    fread(bytes, 1, col_size, db_file);
 
-			    s64 int_value = parseSqlInt(bytes, col_size);
-			    free(bytes);
+                    int_value = parseSqlInt(bytes, col_size);
+                    free(bytes);
+				}
 
 			    col_data.columns[j].value = malloc(100 * sizeof(char));
 			    sprintf(col_data.columns[j].value, "%lld", int_value);
@@ -249,6 +256,8 @@ int traverseBTree(FILE* db_file, ParseQueryResult query, s64 cur_pg_addr, Column
 		    freeMacro(lc_col_name);
 		}
     }
+
+	return 0;
 }
 
 u8 isWhereSatisfied(WhereTree* where_tree, ColumnList cols) {

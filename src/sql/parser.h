@@ -82,6 +82,7 @@ typedef struct {
 typedef struct {
     ColumnData* columns;
     u8 num_columns;
+    char* primary_key_colname; // name of the column with primary column
 } ColumnList;
 
 /*

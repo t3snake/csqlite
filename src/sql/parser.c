@@ -229,10 +229,15 @@ ColumnList parseCreateTblStmt(const char* statement) {
     result.columns = (ColumnData*) malloc(100 * sizeof(ColumnData)); // assuming that there are not more than 100 properties
     // TODO: implement dynamic array
     result.num_columns = 0;
+    result.primary_key_colname = NULL;
+
+    char* last_read_colname = NULL;
 
     s8 is_in_bracket = 0;
     u8 is_reading_col_name = 0;
     u8 is_reading_col_type = 0;
+
+    u8 is_read_primary = 0; // flag for if primary is read, when reading "primary key"
 
     char* temp_word = malloc(100 * sizeof(char)); // assuming that there are not more than 100 character column names
     u8 temp_len = 0;
@@ -248,48 +253,68 @@ ColumnList parseCreateTblStmt(const char* statement) {
             continue;
         }
 
-        if (is_in_bracket) {
-            if (statement[i] == ' ' && is_reading_col_name) {
-                result.columns[result.num_columns].name = malloc(temp_len + 1);
-                memcpy(result.columns[result.num_columns].name, temp_word, temp_len);
-                // Dont increase num_column yet, increment after reading column type
-                result.columns[result.num_columns].name[temp_len] = '\0';
-
-                is_reading_col_name = 0;
-                is_reading_col_type = 1;
-                temp_len = 0;
-                continue;
-            }
-
-            if ((statement[i] == ' ' || statement[i] == ',' || statement[i] == ')') && is_reading_col_type) {
-                result.columns[result.num_columns].type = malloc(temp_len + 1);
-                memcpy(result.columns[result.num_columns].type, temp_word, temp_len);
-                result.columns[result.num_columns].type[temp_len] = '\0';
-
-                result.num_columns++;
-
-                is_reading_col_type = 0;
-                temp_len = 0;
-
-                if ( statement[i] == ')' ) {
-                    break;
-                } else if ( statement[i] == ',' ) {
-                    is_reading_col_name = 1;
-                }
-                continue;
-            }
-            if ( statement[i] == ',' ) {
-                // skips additional constraints eg: "id integer primary key"
-                // we read "id" and "integer", and skip "primary" and "key"
-                // only starting reading column again on
-                is_reading_col_name = 1;
-                temp_len = 0;
-                continue;
-            }
-
-            temp_word[temp_len] = statement[i];
-            temp_len++;
+        if (!is_in_bracket) {
+            continue;
         }
+
+        if (statement[i] == ' ' && is_reading_col_name) {
+            result.columns[result.num_columns].name = malloc(temp_len + 1);
+            memcpy(result.columns[result.num_columns].name, temp_word, temp_len);
+            // Dont increase num_column yet, increment after reading column type
+            result.columns[result.num_columns].name[temp_len] = '\0';
+
+            // ptr to read colname in case it turns out to be primary key
+            last_read_colname = result.columns[result.num_columns].name;
+
+            is_reading_col_name = 0;
+            is_reading_col_type = 1;
+            temp_len = 0;
+            continue;
+        }
+
+        if ((statement[i] == ' ' || statement[i] == ',' || statement[i] == ')') && is_reading_col_type) {
+            result.columns[result.num_columns].type = malloc(temp_len + 1);
+            memcpy(result.columns[result.num_columns].type, temp_word, temp_len);
+            result.columns[result.num_columns].type[temp_len] = '\0';
+
+            result.num_columns++;
+
+            is_reading_col_type = 0;
+            temp_len = 0;
+
+            if ( statement[i] == ')' ) {
+                break;
+            } else if ( statement[i] == ',' ) {
+                is_reading_col_name = 1;
+            }
+            continue;
+        }
+
+        if ( !is_reading_col_name && !is_reading_col_type ) {
+            if ( statement[i] == ',' || statement[i] == ' ' || statement[i] == ')' ) {
+                // check if "primary" "key"
+                char* x = malloc(temp_len + 1);
+                memcpy(x, temp_word, temp_len);
+                x[temp_len] = '\0';
+
+                if (strcmp(x, "primary") == 0) {
+                    is_read_primary = 1;
+                } else if (strcmp(x, "key") == 0 && is_read_primary) {
+                    result.primary_key_colname = last_read_colname;
+                }
+            }
+            // dont continue - for last comma check
+        }
+
+        if ( statement[i] == ',' ) {
+            // only starting reading column name again on reading comma
+            is_reading_col_name = 1;
+            temp_len = 0;
+            continue;
+        }
+
+        temp_word[temp_len] = statement[i];
+        temp_len++;
     }
 
     freeMacro(temp_word);
