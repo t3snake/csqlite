@@ -10,7 +10,7 @@
 #include "sql/runquery.h"
 
 
-#define freeMacro(var_name) if (var_name != NULL) { free(var_name); var_name = NULL; }
+#define freeMacro(var_name) free(var_name);
 
 /*
  * Runs .dbinfo dot command, prints the DB info and returns the usual return code.
@@ -122,6 +122,8 @@ int runSelectQuery(const char* db_file_path, const char* query) {
     // crawl b-tree
     int retcode = traverseBTree(database_file, query_res, tbl_info.page_address, col_data, page_size);
 
+    fprintf(stderr, "traversal done. retcode: %d", retcode);
+
     for (int i = 0; i < col_data.num_columns; i++) {
         freeMacro(col_data.columns[i].name);
         freeMacro(col_data.columns[i].type);
@@ -136,12 +138,14 @@ int runSelectQuery(const char* db_file_path, const char* query) {
     freeMacro(query_res.table);
 
     // Note: only single node since current implementation only supports one condition.
-    freeMacro(query_res.where_tree->left);
-    freeMacro(query_res.where_tree->right);
-    freeMacro(query_res.where_tree->condition.comparator);
-    freeMacro(query_res.where_tree->condition.l_col_name);
-    freeMacro(query_res.where_tree->condition.r_value);
-    freeMacro(query_res.where_tree);
+    if (query_res.where_tree != NULL) {
+        freeMacro(query_res.where_tree->left);
+        freeMacro(query_res.where_tree->right);
+        freeMacro(query_res.where_tree->condition.comparator);
+        freeMacro(query_res.where_tree->condition.l_col_name);
+        freeMacro(query_res.where_tree->condition.r_value);
+        freeMacro(query_res.where_tree);
+    }
 
     fclose(database_file);
     return retcode;

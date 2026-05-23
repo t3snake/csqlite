@@ -304,7 +304,9 @@ ColumnList parseCreateTblStmt(const char* statement) {
                     result.primary_key_colname = last_read_colname;
                     is_read_primary = 0;
                     fprintf(stderr, "primary col name: %s\n", last_read_colname);
+                    last_read_colname = NULL;
                 }
+                freeMacro(x);
                 temp_len = 0;
 
                 if ( statement[i] == ',' ) {

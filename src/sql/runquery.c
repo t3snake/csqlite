@@ -10,7 +10,7 @@
 #include "utils.h"
 
 
-#define freeMacro(var_name) if (var_name != NULL) { free(var_name); }
+#define freeMacro(var_name) free(var_name);
 
 TableInfo seekToTable(FILE* db_file, char* table_name, u16 page_size) {
     TableInfo tbl_info;
@@ -81,17 +81,19 @@ int traverseBTree(FILE* db_file, ParseQueryResult query, s64 cur_pg_addr, Column
 
 	fread(buffer, 1, 2, db_file);
 	u16 row_count = (buffer[1] | (buffer[0] << 8)); // to be used if count(*) property in sql query (for leaf page)
-	if (is_leaf) {
-	   	fprintf(stderr, "debug_info: row count %d\n", row_count);
-	} else if (is_interior) {
-		fprintf(stderr, "debug_info: cell count %d\n", row_count);
-	}
+	// if (is_leaf) {
+	//    	fprintf(stderr, "debug_info: row count %d\n", row_count);
+	// } else if (is_interior) {
+	// 	fprintf(stderr, "debug_info: cell count %d\n", row_count);
+	// }
 
 	if (is_leaf) {
+	    fprintf(stderr, "traverse leaf\n");
 		// Mini optimization: if count * is only property, early return
 		char* property = query.select_col_len > 0 ? toLowerCase(query.select_cols[0]) : "";
 		if (query.select_col_len == 1 && strcmp(property, "count(*)") == 0) {
 		    printf("%d\n", row_count);
+			freeMacro(property);
 		    return 0;
 		}
 		freeMacro(property);
@@ -103,6 +105,7 @@ int traverseBTree(FILE* db_file, ParseQueryResult query, s64 cur_pg_addr, Column
 	// for interior node it is 12 byte and we need to store right most child pointer (last 4 bytes)
 	s64 rightmost_child = 0;
 	if (is_interior) {
+        fprintf(stderr, "traverse interior\n");
 		fread(buffer, 1, 4, db_file);
 		rightmost_child = (buffer[0] << 24) | (buffer[1] << 16) | (buffer[2] << 8) | buffer[3];
 	}
@@ -117,7 +120,7 @@ int traverseBTree(FILE* db_file, ParseQueryResult query, s64 cur_pg_addr, Column
 	}
 
 	if (is_interior) {
-		// TODO, crawl children of B-Tree
+		// crawl children of B-Tree
 		for (int i = 0; i < row_count; i++) {
 			ParseVarintResult varint;
 
@@ -265,7 +268,7 @@ u8 isWhereSatisfied(WhereTree* where_tree, ColumnList cols) {
     // we have to go through all the columns
     // TODO possible optimization => short circuit or/and of where condition
     if (where_tree == NULL) {
-        return 0;
+        return 1;
     }
 
     u8 is_where_satisfied = 0;
