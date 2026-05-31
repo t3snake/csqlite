@@ -15,6 +15,7 @@
 TableInfo seekToTable(FILE* db_file, char* table_name, u16 page_size) {
     TableInfo tbl_info;
     tbl_info.is_table_found = 0;
+    tbl_info.is_idx_found = 0;
     tbl_info.create_sql_stm = NULL;
     tbl_info.page_address = -1;
 
@@ -50,19 +51,33 @@ TableInfo seekToTable(FILE* db_file, char* table_name, u16 page_size) {
             continue;
         }
 
-        fprintf(stderr, "debug_info: table name found.\n");
+        if (info.type == 2) {
+            fprintf(stderr, "Rows other than table and index are not supported currently, skipping.\n");
+            continue;
+        }
 
-        tbl_info.is_table_found = 1;
-        tbl_info.page_address = page_size * (info.root_page - 1); // the first rootpage starts at address 0, usually the internal table
+        char* tbl_type = info.type == 1 ? "index" : "table";
+        char* name = info.type == 1 ? info.index_name : info.table_name;
+        fprintf(stderr, "debug_info: %s - %s found.\n", tbl_type, name);
+
+        tbl_info.is_table_found = tbl_info.is_table_found || (info.type == 0); // once found, should be always true afterwards
+        tbl_info.is_idx_found = tbl_info.is_idx_found || (info.type); // once found, should be always true
+        s64 page_addr = page_size * (info.root_page - 1); // the first rootpage starts at address 0, usually the internal table
         tbl_info.create_sql_stm = info.sql_create_stm;
 
-        fseek(db_file, tbl_info.page_address, SEEK_SET); // Note: should this function do it, or the caller?
+        if (info.type == 1) {
+            tbl_info.idx_page_address = page_addr;
+        } else {
+            tbl_info.page_address = page_addr;
+        }
 
         freeMacro(info.table_name);
-        freeMacro(entries.offsets);
+        freeMacro(info.index_name);
 
-        break;
+        // dont break since we have to scan not only tables but also indexes if present.
     }
+    fseek(db_file, tbl_info.page_address, SEEK_SET); // Note: should this function do it, or the caller?
+    freeMacro(entries.offsets);
 
     return tbl_info;
 }

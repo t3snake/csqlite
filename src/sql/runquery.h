@@ -13,8 +13,11 @@
  */
 typedef struct {
     u8 is_table_found; //
+    u8 is_idx_found;
     s64 page_address;
+    s64 idx_page_address; // assumes single index being present
     char* create_sql_stm;
+    char* create_idx_stm; // assumes single index being present
 } TableInfo;
 
 /*

@@ -6,12 +6,17 @@
 
 /*
  * Represents row of internal sqlite_schema table.
+ * - Type: Table (0), Index (1), Others (2)
  * - Table Name
+ * - Index Name (if type is index, else NULL)
  * - Root Page number
+ * - SQL Create Statement: CREATE TABLE or CREATE INDEX statement
  *
  * See: `getSchemaTabRowAddr` method.
  */
 typedef struct _SchemaInfo {
+    u8 type; // Table (0), Index (1), Others (2)
+    char* index_name; // NULL if type is table, stores index name if t
     char* table_name;
     s64 root_page;
     char* sql_create_stm;
