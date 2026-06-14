@@ -119,8 +119,65 @@ int runSelectQuery(const char* db_file_path, const char* query) {
     ColumnList col_data = parseCreateTblStmt(tbl_info.create_sql_stm);
     fprintf(stderr, "debug_info: successfully parsed create statement\n");
 
+
+    IndexSearchResult idx_search_results;
+    idx_search_results.is_index_relevant = 0;
+    idx_search_results.current_search_idx = 0;
+
+    // if there is no where condition, skip index processing
+	if (tbl_info.is_idx_found && query_res.where_tree != NULL) {
+		idx_search_results.is_index_relevant = 1;
+		fprintf(stderr, "debug_info: calling parseCreateIdxStmt\n");
+
+		Columns idx_cols = parseCreateIdxStmt(tbl_info.create_idx_stm);
+
+		// Note: currently there is only one condition supported, multiple conditions would require more complex checks.
+		char* where_col_name = query_res.where_tree->condition.l_col_name;
+		u8 is_match = 0;
+
+		fprintf(stderr, "debug_info: successfully parsed create index stmt\n");
+		for (int coli = 0; coli < idx_cols.cols_len; coli++) {
+		    fprintf(stderr, "%s, ", idx_cols.columns[coli]);
+
+		    if (strcmp(idx_cols.columns[coli], where_col_name) == 0) {
+		        is_match = 1;
+		    }
+		}
+		fprintf(stderr, "\n");
+
+		// TODO parse Index B-Tree if where condition contains column name in index
+		if (is_match) {
+			char* col_value = query_res.where_tree->condition.r_value;
+			u8 col_val_mode = query_res.where_tree->condition.r_value_mode; // 0 - string, 1 - int, 2 - another column
+
+			FileState file_state;
+			file_state.db_file = database_file;
+			file_state.page_size = page_size;
+			file_state.page_address = tbl_info.idx_page_address;
+
+			IndexSearchParams search_params;
+			search_params.idx_cols = idx_cols;
+			search_params.where_col_mode = col_val_mode;
+			search_params.where_col_value = col_value;
+
+			RowIds row_ids;
+			int retcode = traverseIndexBTree(file_state, search_params, &row_ids);
+			if (retcode) {
+				fprintf(stderr, "Unknown Error while traversing index B-Tree");
+				return retcode;
+			}
+
+			idx_search_results.row_ids = row_ids;
+		}
+	}
+
+    FileState file_state;
+    file_state.db_file = database_file;
+    file_state.page_address = tbl_info.page_address;
+    file_state.page_size = page_size;
+
     // crawl b-tree
-    int retcode = traverseBTree(database_file, query_res, tbl_info.page_address, col_data, page_size);
+    int retcode = traverseTableBTree(file_state, query_res, col_data, idx_search_results);
 
     fprintf(stderr, "traversal done. retcode: %d", retcode);
 

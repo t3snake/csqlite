@@ -82,27 +82,28 @@ TableInfo seekToTable(FILE* db_file, char* table_name, u16 page_size) {
     return tbl_info;
 }
 
-int traverseBTree(FILE* db_file, ParseQueryResult query, s64 cur_pg_addr, ColumnList col_data, u16 page_size) {
+int traverseTableBTree(FileState file_state, ParseQueryResult query, ColumnList col_data, IndexSearchResult idx_search_results) {
 	u8 buffer[4];
 
 	// read page header
 	// see if leaf or interior page
-	fread(buffer, 1, 1, db_file);
+	fread(buffer, 1, 1, file_state.db_file);
 	u8 is_interior = (buffer[0] == 0x05); // if is table b-tree interior page
 	u8 is_leaf = (buffer[0] == 0x0D); // if is table b-tree leaf page
 
 	// get all rows in the page
-	fseek(db_file, 2, SEEK_CUR); // go to offset 3 (+2 after reading 1st byte) to get cell count of the b-tree page
+	fseek(file_state.db_file, 2, SEEK_CUR); // go to offset 3 (+2 after reading 1st byte) to get cell count of the b-tree page
 
-	fread(buffer, 1, 2, db_file);
+	fread(buffer, 1, 2, file_state.db_file);
 	u16 row_count = (buffer[1] | (buffer[0] << 8)); // to be used if count(*) property in sql query (for leaf page)
+
 	// if (is_leaf) {
 	//    	fprintf(stderr, "debug_info: row count %d\n", row_count);
 	// } else if (is_interior) {
 	// 	fprintf(stderr, "debug_info: cell count %d\n", row_count);
 	// }
 
-	if (is_leaf) {
+	if (is_leaf && query.where_tree == NULL) {
 	    fprintf(stderr, "traverse leaf\n");
 		// Mini optimization: if count * is only property, early return
 		char* property = query.select_col_len > 0 ? toLowerCase(query.select_cols[0]) : "";
@@ -115,13 +116,13 @@ int traverseBTree(FILE* db_file, ParseQueryResult query, s64 cur_pg_addr, Column
 	}
 
 	// following line is sufficient in case of leaf node (8byte header).
-	fseek(db_file, 3, SEEK_CUR); // skip 3 bytes to reach end of header and reach cell ptr array
+	fseek(file_state.db_file, 3, SEEK_CUR); // skip 3 bytes to reach end of header and reach cell ptr array
 
 	// for interior node it is 12 byte and we need to store right most child pointer (last 4 bytes)
 	s64 rightmost_child = 0;
 	if (is_interior) {
         fprintf(stderr, "traverse interior\n");
-		fread(buffer, 1, 4, db_file);
+		fread(buffer, 1, 4, file_state.db_file);
 		rightmost_child = (buffer[0] << 24) | (buffer[1] << 16) | (buffer[2] << 8) | buffer[3];
 	}
 
@@ -130,7 +131,7 @@ int traverseBTree(FILE* db_file, ParseQueryResult query, s64 cur_pg_addr, Column
 	u16* row_offsets = malloc(row_count * sizeof(u16));
 	for (int i = 0; i < row_count; i++) {
 		// Read next 2 bytes to get address of cell content area
-		fread(buffer, 1, 2, db_file);
+		fread(buffer, 1, 2, file_state.db_file);
 		*(row_offsets + i) = buffer[1] | (buffer[0] << 8);
 	}
 
@@ -140,20 +141,37 @@ int traverseBTree(FILE* db_file, ParseQueryResult query, s64 cur_pg_addr, Column
 			ParseVarintResult varint;
 
 			// Seek to row offset from beginning of the page to reach row.
-			s64 row_offset = cur_pg_addr + row_offsets[i];
-			fseek(db_file, row_offset, SEEK_SET);
+			s64 row_offset = file_state.page_address + row_offsets[i];
+			fseek(file_state.db_file, row_offset, SEEK_SET);
 
 			// Next 4 bytes are the left child of i-th key
-			fread(buffer, 1, 4, db_file);
+			fread(buffer, 1, 4, file_state.db_file);
 			s64 child = (buffer[0] << 24) | (buffer[1] << 16) | (buffer[2] << 8) | buffer[3]; // big-endian int page num
 
-			// TODO parseVarint if index needed
+			// row id, required if index or row id where condition in place
+			varint = parseVarint(file_state.db_file);
+			s64 row_id = varint.value;
 
-			s64 page_address = page_size * (child - 1); // page num to page addr conversion
+			if (idx_search_results.is_index_relevant && (idx_search_results.current_search_idx < idx_search_results.row_ids.len) ) {
+				s64 row_id_to_search = idx_search_results.row_ids.row_ids[idx_search_results.current_search_idx];
+				if (row_id_to_search >= row_id) {
+					// Note: OPTIMIZATION - if row_id to search next is not less than key, need not go to left child pointer,
+					// so skip to next key
+					continue;
+				}
+			}
 
-			fseek(db_file, page_address, SEEK_SET);
+			// seek to left child and traverse the b-tree
+			s64 left_child_pg_addr = file_state.page_size * (child - 1); // page num to page addr conversion
 
-			int retcode = traverseBTree(db_file, query, page_address, col_data, page_size);
+			fseek(file_state.db_file, left_child_pg_addr, SEEK_SET);
+
+			FileState new_state;
+			new_state.db_file = file_state.db_file;
+			new_state.page_size = file_state.page_size;
+			new_state.page_address = left_child_pg_addr;
+
+			int retcode = traverseTableBTree(new_state, query, col_data, idx_search_results);
 
 			if (retcode) {
 				// err code
@@ -161,11 +179,16 @@ int traverseBTree(FILE* db_file, ParseQueryResult query, s64 cur_pg_addr, Column
 			}
 		}
 
-		s64 page_address = page_size * (rightmost_child - 1); // last child pending - rightmost
+		s64 page_address = file_state.page_size * (rightmost_child - 1); // last child pending - rightmost
 
-		fseek(db_file, page_address, SEEK_SET);
+		fseek(file_state.db_file, page_address, SEEK_SET);
 
-		int retcode = traverseBTree(db_file, query, page_address, col_data, page_size);
+		FileState new_state;
+		new_state.db_file = file_state.db_file;
+		new_state.page_size = file_state.page_size;
+		new_state.page_address = page_address;
+
+		int retcode = traverseTableBTree(new_state, query, col_data, idx_search_results);
 
 		return retcode;
 	}
@@ -183,23 +206,32 @@ int traverseBTree(FILE* db_file, ParseQueryResult query, s64 cur_pg_addr, Column
 		ParseVarintResult varint;
 
 		// Seek to row offset from beginning of the page to reach row.
-		s64 row_offset = cur_pg_addr + row_offsets[i];
-		fseek(db_file, row_offset, SEEK_SET);
+		s64 row_offset = file_state.page_address + row_offsets[i];
+		fseek(file_state.db_file, row_offset, SEEK_SET);
 
-		varint = parseVarint(db_file); // Size of record
-		u64 record_size = varint.value;
+		varint = parseVarint(file_state.db_file); // Size of record - can be ignored
 
-		varint = parseVarint(db_file); // row id - required as value, if primary key
+		varint = parseVarint(file_state.db_file); // row id - required as value, if primary key
 		s64 row_id = varint.value;
 
-		varint = parseVarint(db_file); //record header size
+		if (idx_search_results.is_index_relevant && (idx_search_results.current_search_idx < idx_search_results.row_ids.len) ) {
+			s64 row_id_to_search = idx_search_results.row_ids.row_ids[idx_search_results.current_search_idx];
+			if (row_id_to_search != row_id) {
+				// Note: OPTIMIZATION - for leaf node if row_id does not match, skip the row
+				continue;
+			}
+			// in case it is a match, update current idx ptr to search the next rowid
+			idx_search_results.current_search_idx++;
+		}
+
+		varint = parseVarint(file_state.db_file); //record header size
 		u64 record_hdr_size = varint.value - 1; // subtracting size of itself
 
 		u64 col_len = col_data.num_columns;
 		u64* col_sizes = malloc(col_len * sizeof(u64)); // Assumption less than 100 columns
 
 		for (int j = 0; record_hdr_size > 0; j++) {
-			varint = parseVarint(db_file);
+			varint = parseVarint(file_state.db_file);
 
 			col_sizes[j] = getRecordSerialTypeSize(varint.value);
 			record_hdr_size -= varint.byte_span;
@@ -217,7 +249,7 @@ int traverseBTree(FILE* db_file, ParseQueryResult query, s64 cur_pg_addr, Column
 
 			if (strcmp(col_type, "text") == 0) {
 			    char* text = malloc((col_size + 1) * sizeof(char));
-			    fread(text, 1, col_size, db_file);
+			    fread(text, 1, col_size, file_state.db_file);
 			    text[col_size] = '\0';
 
 			    col_data.columns[j].value = text;
@@ -228,7 +260,7 @@ int traverseBTree(FILE* db_file, ParseQueryResult query, s64 cur_pg_addr, Column
 					int_value = row_id;
 				} else {
                     u8* bytes = malloc(col_size);
-                    fread(bytes, 1, col_size, db_file);
+                    fread(bytes, 1, col_size, file_state.db_file);
 
                     int_value = parseSqlInt(bytes, col_size);
                     free(bytes);
@@ -237,7 +269,7 @@ int traverseBTree(FILE* db_file, ParseQueryResult query, s64 cur_pg_addr, Column
 			    col_data.columns[j].value = malloc(100 * sizeof(char));
 			    sprintf(col_data.columns[j].value, "%lld", int_value);
 			} else {
-			    fseek(db_file, col_size, SEEK_CUR);
+			    fseek(file_state.db_file, col_size, SEEK_CUR);
 			    col_data.columns[j].value = NULL;
 			}
 		}
@@ -276,6 +308,171 @@ int traverseBTree(FILE* db_file, ParseQueryResult query, s64 cur_pg_addr, Column
     }
 
 	return 0;
+}
+
+int traverseIndexBTree(FileState file_state, IndexSearchParams search_params, RowIds* result) {
+    result->row_ids = (s64*) malloc(10000 * sizeof(s64));
+    result->len = 0;
+
+    u8 buffer[4];
+
+	// read page header
+	// see if leaf or interior page
+	fread(buffer, 1, 1, file_state.db_file);
+	u8 is_interior = (buffer[0] == 0x02); // if is table b-tree interior page
+	u8 is_leaf = (buffer[0] == 0x0A); // if is table b-tree leaf page
+
+	// get all rows in the page
+	fseek(file_state.db_file, 2, SEEK_CUR); // go to offset 3 (+2 after reading 1st byte) to get cell count of the b-tree page
+
+	fread(buffer, 1, 2, file_state.db_file);
+	u16 cell_count = (buffer[1] | (buffer[0] << 8)); // to be used if count(*) property in sql query (for leaf page)
+
+	// following line is sufficient in case of leaf node (8byte header).
+	fseek(file_state.db_file, 3, SEEK_CUR); // skip 3 bytes to reach end of header and reach cell ptr array
+
+	// for interior node it is 12 byte and we need to store right most child pointer (last 4 bytes)
+	s64 rightmost_child = 0;
+	if (is_interior) {
+        fprintf(stderr, "traverse interior\n");
+		fread(buffer, 1, 4, file_state.db_file);
+		rightmost_child = (buffer[0] << 24) | (buffer[1] << 16) | (buffer[2] << 8) | buffer[3];
+	}
+
+	// get row offset in page for each row
+	// Note: common for leaf and interior
+	u16* cell_offsets = malloc(cell_count * sizeof(u16));
+	for (int i = 0; i < cell_count; i++) {
+		// Read next 2 bytes to get address of cell content area
+		fread(buffer, 1, 2, file_state.db_file);
+		*(cell_offsets + i) = buffer[1] | (buffer[0] << 8);
+	}
+
+	// crawl children of B-Tree: all keys in both interior and leaf nodes
+	for (int i = 0; i < cell_count; i++) {
+		ParseVarintResult varint;
+
+		// Seek to row offset from beginning of the page to reach row.
+		s64 row_offset = file_state.page_address + cell_offsets[i];
+		fseek(file_state.db_file, row_offset, SEEK_SET);
+
+		s64 left_child_pg_num = 0;
+		s64 left_child_page_address = 0;
+		if (is_interior) {
+            // Next 4 bytes are the left child of i-th key
+            fread(buffer, 1, 4, file_state.db_file);
+            left_child_pg_num = (buffer[0] << 24) | (buffer[1] << 16) | (buffer[2] << 8) | buffer[3]; // big-endian int page num
+
+            left_child_page_address = file_state.page_size * (left_child_pg_num - 1); // page num to page addr conversion
+		}
+
+		// payload of interior and leaf both contain same structure: key and rowid, where key is all the columns used to create index
+		// key of interior can be used to traverse to the appropriate child
+
+		varint = parseVarint(file_state.db_file); // Size of cell in bytes - can be ignored
+
+		varint = parseVarint(file_state.db_file); //record header size
+		u64 record_hdr_size = varint.value - 1; // subtracting size of itself
+
+		u64 col_len = search_params.idx_cols.cols_len;
+		u64* col_sizes = malloc(col_len * sizeof(u64)); // Assumption less than 100 columns
+
+		for (int j = 0; record_hdr_size > 0; j++) {
+			varint = parseVarint(file_state.db_file);
+
+			col_sizes[j] = getRecordSerialTypeSize(varint.value);
+			record_hdr_size -= varint.byte_span;
+		}
+
+		// Note: currently is_match only works this way is because there is only support for a single column
+		// if multiple columns need to match, is_match needs to be 1 initially and the subsequent check needs to be && every time
+		// if a single column check fails, is_match becomes 0
+
+		u8 is_match = 0; // signals if the key is equal to the where condition value, thus if row id needs to be stored
+		s64 row_id = 0;
+
+		// go over all columns that contribute to the key in both leaf and interior
+		for (int j = 0; j < col_len; j++) {
+			if (j == col_len - 1) {
+				// row id case
+				u64 col_size = col_sizes[j];
+				u8* bytes = malloc(col_size);
+				fread(bytes, 1, col_size, file_state.db_file);
+
+				row_id = parseSqlInt(bytes, col_size);
+				free(bytes);
+
+				if (is_match) {
+					// append row_id
+					result->row_ids[result->len] = row_id;
+					result->len++;
+				}
+
+				break; // last column
+			}
+
+			// go over each column in the current row, order as stored in .db file
+			u64 col_size = col_sizes[j];
+
+			if (search_params.where_col_mode == 0) { // string
+                char* text = malloc((col_size + 1) * sizeof(char));
+                fread(text, 1, col_size, file_state.db_file);
+                text[col_size] = '\0';
+
+                is_match = (strcmp(text, search_params.where_col_value) == 0);
+			} else if (search_params.where_col_mode == 1) { // int
+                s64 int_value = 0;
+                u8* bytes = malloc(col_size);
+                fread(bytes, 1, col_size, file_state.db_file);
+
+                int_value = parseSqlInt(bytes, col_size);
+                free(bytes);
+
+                char* idx_col_val = malloc(100 * sizeof(char));
+                sprintf(idx_col_val, "%lld", int_value);
+			} else {
+			    fprintf(stderr, "Columns other than int and str not supported in indexes.\n");
+			}
+		}
+
+		if (is_interior) {
+			// TODO: traverse to left child ideally if value of key is > value in where condition
+			// if value of key is greater, continue to next key for their left child or rightmost child if this is last key
+			//
+			// but for equal keys there can be multiple entries, where do they exist? left or right, have to search all in that case
+			// the file format spec does not specify for equal case in index b-trees
+			FileState fs;
+			fs.db_file = file_state.db_file;
+			fs.page_size = file_state.page_size;
+			fs.page_address = left_child_page_address;
+
+			fseek(file_state.db_file, left_child_page_address, SEEK_SET);
+
+			int retcode = traverseIndexBTree(fs, search_params, result);
+			if (retcode) {
+				return retcode;
+			}
+			continue;
+		}
+	}
+
+	if (is_interior) {
+		// search finally rightmost child
+		FileState fs;
+		fs.db_file = file_state.db_file;
+		fs.page_size = file_state.page_size;
+		s64 right_page_address = file_state.page_size * (rightmost_child - 1); // page num to page addr conversion
+		fs.page_address = right_page_address;
+
+		fseek(file_state.db_file, right_page_address, SEEK_SET);
+
+		int retcode = traverseIndexBTree(fs, search_params, result);
+		if (retcode) {
+			return retcode;
+		}
+	}
+
+    return 0;
 }
 
 u8 isWhereSatisfied(WhereTree* where_tree, ColumnList cols) {

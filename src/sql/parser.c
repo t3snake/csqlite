@@ -325,3 +325,47 @@ ColumnList parseCreateTblStmt(const char* statement) {
 
     return result;
 }
+
+Columns parseCreateIdxStmt(const char* statement) {
+    Columns result;
+    result.columns = malloc(100 * sizeof(char*)); // assumption: less than 100 columns
+    result.cols_len = 0;
+
+    u8 is_in_brackets = 0;
+
+    char* temp_word = malloc(100); // assumption: less than 100 character column name
+    u8 temp_len = 0;
+
+    for (int i = 0; i < strlen(statement); i++) {
+        char c = statement[i];
+
+        if (c == '(') {
+            is_in_brackets = 1;
+        } else if (c == ')') {
+            is_in_brackets = 0;
+        }
+
+        if (is_in_brackets) {
+            if (c == ',') {
+                result.columns[result.cols_len] = malloc(temp_len + 1);
+                memcpy(result.columns[result.cols_len], temp_word, temp_len);
+                result.columns[result.cols_len][temp_len] = '\0';
+
+                result.cols_len++;
+                temp_len = 0;
+                continue;
+            }
+
+            if (c == ' ') {
+                continue;
+            }
+
+            temp_word[temp_len] = c;
+            temp_len++;
+        }
+    }
+
+    free(temp_word);
+
+    return result;
+}

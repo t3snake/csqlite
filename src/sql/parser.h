@@ -52,18 +52,6 @@ typedef struct {
 } ParseQueryResult;
 
 /*
- * Holds result information after running a select query.
- *
- * See: `runSelectQuery` method.
- */
-typedef struct {
-
-    // return code as int
-    int err;
-
-} SelectQueryResults;
-
-/*
  * Name and type of a SQLite table column.
  *
  * See: `ColumnList` struct and `parseCreateTblStmt` method.
@@ -86,6 +74,17 @@ typedef struct {
 } ColumnList;
 
 /*
+ * Holds a list of column names (list of strings).
+ *
+ * See: method `parseCreateIdxStmt`
+ */
+typedef struct {
+    char** columns;
+    u8 cols_len;
+} Columns;
+
+
+/*
  * Parses SQL Query statement and gets components of the statement.
  * - SQL Command (eg: select)
  * - Table Name
@@ -94,9 +93,23 @@ typedef struct {
  */
 ParseQueryResult parseQuery(const char* query);
 
+
 /*
- * Parses CREATE TABLE statement to get list of columns (strings) in the table.
+ * Parses CREATE TABLE statement to get list of column name, type and primary keys (strings) in the table.
+ *
+ * Assumptions:
+ * - Number of columns should be less than 100.
+ * - The length of the column name should be less than 100.
  */
 ColumnList parseCreateTblStmt(const char* statement);
+
+/*
+ * Parses CREATE INDEX statement to get list of column names (strings) relevant for the index.
+ *
+ * Assumptions:
+ * - Number of columns should be less than 100.
+ * - The length of the column name should be less than 100.
+ */
+Columns parseCreateIdxStmt(const char* statement);
 
 #endif // include guard end
