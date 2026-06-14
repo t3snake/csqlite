@@ -248,6 +248,10 @@ ColumnList parseCreateTblStmt(const char* statement) {
             continue;
         }
 
+        if(statement[i] == '\n' || statement[i] == '\t') {
+        	continue;
+        }
+
         if (statement[i] == '(') {
             is_in_bracket = 1;
             is_reading_col_name = 1;
@@ -341,8 +345,16 @@ Columns parseCreateIdxStmt(const char* statement) {
 
         if (c == '(') {
             is_in_brackets = 1;
+            continue;
         } else if (c == ')') {
             is_in_brackets = 0;
+            result.columns[result.cols_len] = malloc(temp_len + 1);
+            memcpy(result.columns[result.cols_len], temp_word, temp_len);
+            result.columns[result.cols_len][temp_len] = '\0';
+
+            result.cols_len++;
+            temp_len = 0;
+            break;
         }
 
         if (is_in_brackets) {

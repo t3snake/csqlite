@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "utils.h"
+#include "datatype.h"
 
 
 char* toLowerCase(const char* str) {

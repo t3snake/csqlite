@@ -12,7 +12,7 @@
 
 #define freeMacro(var_name) free(var_name);
 
-TableInfo seekToTable(FILE* db_file, char* table_name, u16 page_size) {
+TableInfo getTableDetails(FILE* db_file, char* table_name, u16 page_size) {
     TableInfo tbl_info;
     tbl_info.is_table_found = 0;
     tbl_info.is_idx_found = 0;
@@ -63,12 +63,13 @@ TableInfo seekToTable(FILE* db_file, char* table_name, u16 page_size) {
         tbl_info.is_table_found = tbl_info.is_table_found || (info.type == 0); // once found, should be always true afterwards
         tbl_info.is_idx_found = tbl_info.is_idx_found || (info.type); // once found, should be always true
         s64 page_addr = page_size * (info.root_page - 1); // the first rootpage starts at address 0, usually the internal table
-        tbl_info.create_sql_stm = info.sql_create_stm;
 
         if (info.type == 1) {
             tbl_info.idx_page_address = page_addr;
+            tbl_info.create_idx_stm = info.sql_create_stm;
         } else {
             tbl_info.page_address = page_addr;
+            tbl_info.create_sql_stm = info.sql_create_stm;
         }
 
         freeMacro(info.table_name);
@@ -76,13 +77,13 @@ TableInfo seekToTable(FILE* db_file, char* table_name, u16 page_size) {
 
         // dont break since we have to scan not only tables but also indexes if present.
     }
-    fseek(db_file, tbl_info.page_address, SEEK_SET); // Note: should this function do it, or the caller?
+
     freeMacro(entries.offsets);
 
     return tbl_info;
 }
 
-int traverseTableBTree(FileState file_state, ParseQueryResult query, ColumnList col_data, IndexSearchResult idx_search_results) {
+int traverseTableBTree(FileState file_state, ParseQueryResult query, ColumnList col_data, IndexSearchResult* idx_search_results) {
 	u8 buffer[4];
 
 	// read page header
@@ -152,8 +153,8 @@ int traverseTableBTree(FileState file_state, ParseQueryResult query, ColumnList 
 			varint = parseVarint(file_state.db_file);
 			s64 row_id = varint.value;
 
-			if (idx_search_results.is_index_relevant && (idx_search_results.current_search_idx < idx_search_results.row_ids.len) ) {
-				s64 row_id_to_search = idx_search_results.row_ids.row_ids[idx_search_results.current_search_idx];
+			if (idx_search_results->is_index_relevant && (idx_search_results->current_search_idx < idx_search_results->row_ids.len) ) {
+				s64 row_id_to_search = idx_search_results->row_ids.row_ids[idx_search_results->current_search_idx];
 				if (row_id_to_search >= row_id) {
 					// Note: OPTIMIZATION - if row_id to search next is not less than key, need not go to left child pointer,
 					// so skip to next key
@@ -214,14 +215,15 @@ int traverseTableBTree(FileState file_state, ParseQueryResult query, ColumnList 
 		varint = parseVarint(file_state.db_file); // row id - required as value, if primary key
 		s64 row_id = varint.value;
 
-		if (idx_search_results.is_index_relevant && (idx_search_results.current_search_idx < idx_search_results.row_ids.len) ) {
-			s64 row_id_to_search = idx_search_results.row_ids.row_ids[idx_search_results.current_search_idx];
+		if (idx_search_results->is_index_relevant && (idx_search_results->current_search_idx < idx_search_results->row_ids.len) ) {
+			s64 row_id_to_search = idx_search_results->row_ids.row_ids[idx_search_results->current_search_idx];
 			if (row_id_to_search != row_id) {
 				// Note: OPTIMIZATION - for leaf node if row_id does not match, skip the row
 				continue;
 			}
 			// in case it is a match, update current idx ptr to search the next rowid
-			idx_search_results.current_search_idx++;
+			// Also, PRINT this row
+			idx_search_results->current_search_idx++;
 		}
 
 		varint = parseVarint(file_state.db_file); //record header size
@@ -288,13 +290,15 @@ int traverseTableBTree(FileState file_state, ParseQueryResult query, ColumnList 
 		    if (strcmp(lc_col_name, "count(*)") == 0) {
 		        printf("%d", row_count);
 		    } else {
-		        char* col_value;
+		        char* col_value = NULL;
 		        for (int k = 0; k < col_len; k++) {
 		            if (strcmp(col_data.columns[k].name, query.select_cols[j]) == 0) {
 		                col_value = col_data.columns[k].value;
 		            }
 		        }
-		        printf("%s", col_value);
+				if (col_value != NULL) {
+					printf("%s", col_value);
+				}
 		    }
 
 		    if (j == query.select_col_len - 1) {
@@ -310,10 +314,22 @@ int traverseTableBTree(FileState file_state, ParseQueryResult query, ColumnList 
 	return 0;
 }
 
-int traverseIndexBTree(FileState file_state, IndexSearchParams search_params, RowIds* result) {
-    result->row_ids = (s64*) malloc(10000 * sizeof(s64));
-    result->len = 0;
+void sort(RowIds* rows) {
+	for (int i=0; i < rows->len; i++) {
+		u32 max_idx = 0;
+		for (int j=0; j < rows->len - i; j++) {
+			if (rows->row_ids[j] > rows->row_ids[max_idx]) {
+				max_idx = j;
+			}
+		}
 
+		s64 temp = rows->row_ids[max_idx];
+		rows->row_ids[max_idx] = rows->row_ids[rows->len - i - 1];
+		rows->row_ids[rows->len - i - 1] = temp;
+	}
+}
+
+int traverseIndexBTree(FileState file_state, IndexSearchParams search_params, RowIds* result) {
     u8 buffer[4];
 
 	// read page header
@@ -334,9 +350,11 @@ int traverseIndexBTree(FileState file_state, IndexSearchParams search_params, Ro
 	// for interior node it is 12 byte and we need to store right most child pointer (last 4 bytes)
 	s64 rightmost_child = 0;
 	if (is_interior) {
-        fprintf(stderr, "traverse interior\n");
+        fprintf(stderr, "traverse idx interior\n");
 		fread(buffer, 1, 4, file_state.db_file);
 		rightmost_child = (buffer[0] << 24) | (buffer[1] << 16) | (buffer[2] << 8) | buffer[3];
+	} else {
+		fprintf(stderr, "traverse idx leaf\n");
 	}
 
 	// get row offset in page for each row
@@ -374,14 +392,16 @@ int traverseIndexBTree(FileState file_state, IndexSearchParams search_params, Ro
 		varint = parseVarint(file_state.db_file); //record header size
 		u64 record_hdr_size = varint.value - 1; // subtracting size of itself
 
-		u64 col_len = search_params.idx_cols.cols_len;
+		u64 col_len = search_params.idx_cols.cols_len; // here this col_len is wrong for payload since there is also row_id after col_val
 		u64* col_sizes = malloc(col_len * sizeof(u64)); // Assumption less than 100 columns
 
+		u8 payload_len = 0;
 		for (int j = 0; record_hdr_size > 0; j++) {
 			varint = parseVarint(file_state.db_file);
 
 			col_sizes[j] = getRecordSerialTypeSize(varint.value);
 			record_hdr_size -= varint.byte_span;
+			payload_len++;
 		}
 
 		// Note: currently is_match only works this way is because there is only support for a single column
@@ -392,8 +412,8 @@ int traverseIndexBTree(FileState file_state, IndexSearchParams search_params, Ro
 		s64 row_id = 0;
 
 		// go over all columns that contribute to the key in both leaf and interior
-		for (int j = 0; j < col_len; j++) {
-			if (j == col_len - 1) {
+		for (int j = 0; j < payload_len; j++) { // col_len would only cover the column values and not row id
+			if (j == payload_len - 1) {
 				// row id case
 				u64 col_size = col_sizes[j];
 				u8* bytes = malloc(col_size);

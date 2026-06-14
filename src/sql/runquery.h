@@ -23,7 +23,7 @@ typedef struct {
 
 typedef struct {
     s64* row_ids;
-    u16 len;
+    u32 len;
 } RowIds;
 
 typedef struct {
@@ -40,16 +40,15 @@ typedef struct {
 
 typedef struct {
 	u8 is_index_relevant; // is this result relevant in the main query
-	u8 current_search_idx; // starts with 0, maintains which row_id is to be found next while traversing table b-tree
+	u32 current_search_idx; // starts with 0, maintains which row_id is to be found next while traversing table b-tree
 	RowIds row_ids; // all row ids, by design should be in ascending order
 } IndexSearchResult;
 
 /*
- * Seeks given File pointer to the given table_name. Returns 1 if the table found, else 0.
- * Goes over all sqlite_schema table rows and seeks to the
- * address of the page in which the table exists.
+ * Returns page_address to the given table_name. Returns if the table found.
+ * Goes over all sqlite_schema table rows and details of index if relevant to table and query.
  */
-TableInfo seekToTable(FILE* db_file, char* table_name, u16 page_size);
+TableInfo getTableDetails(FILE* db_file, char* table_name, u16 page_size);
 
 /*
  * Crawls the Table B-Tree which can span multiple pages and **prints** out row if where condition is satisfied.
@@ -57,7 +56,7 @@ TableInfo seekToTable(FILE* db_file, char* table_name, u16 page_size);
  * Returns standard retcode.
  * If there is an index result relevant to speed up search, that is used to selectively search
  */
-int traverseTableBTree(FileState file_state, ParseQueryResult query, ColumnList col_data, IndexSearchResult idx_search_results);
+int traverseTableBTree(FileState file_state, ParseQueryResult query, ColumnList col_data, IndexSearchResult* idx_search_results);
 
 /*
  * Crawls the Index B-Tree and **returns a list** of row ids which can be used to crawl Table B-Tree faster.
@@ -70,5 +69,7 @@ int traverseIndexBTree(FileState file_state, IndexSearchParams search_params, Ro
  * Gives a bool (0 or 1) based on if where was satisfied for the current row values in cols.
  */
 u8 isWhereSatisfied(WhereTree* where_tree, ColumnList cols);
+
+void sort(RowIds* rows);
 
 #endif

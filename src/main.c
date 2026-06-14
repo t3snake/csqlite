@@ -104,7 +104,7 @@ int runSelectQuery(const char* db_file_path, const char* query) {
 
     ParseQueryResult query_res = parseQuery(query);
 
-    TableInfo tbl_info = seekToTable(database_file, query_res.table, page_size);
+    TableInfo tbl_info = getTableDetails(database_file, query_res.table, page_size);
 
     if (!tbl_info.is_table_found) {
         fprintf(stderr, "table %s not found in the database %s.\n", query_res.table, db_file_path);
@@ -123,6 +123,8 @@ int runSelectQuery(const char* db_file_path, const char* query) {
     IndexSearchResult idx_search_results;
     idx_search_results.is_index_relevant = 0;
     idx_search_results.current_search_idx = 0;
+    idx_search_results.row_ids.row_ids = NULL;
+    idx_search_results.row_ids.len = 0;
 
     // if there is no where condition, skip index processing
 	if (tbl_info.is_idx_found && query_res.where_tree != NULL) {
@@ -160,11 +162,24 @@ int runSelectQuery(const char* db_file_path, const char* query) {
 			search_params.where_col_mode = col_val_mode;
 			search_params.where_col_value = col_value;
 
+			fseek(database_file, tbl_info.idx_page_address, SEEK_SET);
+
 			RowIds row_ids;
+			row_ids.row_ids = (s64*) malloc(100000 * sizeof(s64));
+    		row_ids.len = 0;
+
 			int retcode = traverseIndexBTree(file_state, search_params, &row_ids);
 			if (retcode) {
 				fprintf(stderr, "Unknown Error while traversing index B-Tree");
 				return retcode;
+			}
+
+			// bubble sort?
+			sort(&row_ids);
+
+			fprintf(stderr, "debug info: \n");
+			for (int po = 0; po < row_ids.len; po++) {
+				fprintf(stderr, "%lld\n", row_ids.row_ids[po]);
 			}
 
 			idx_search_results.row_ids = row_ids;
@@ -176,8 +191,10 @@ int runSelectQuery(const char* db_file_path, const char* query) {
     file_state.page_address = tbl_info.page_address;
     file_state.page_size = page_size;
 
+    fseek(database_file, tbl_info.page_address, SEEK_SET);
+
     // crawl b-tree
-    int retcode = traverseTableBTree(file_state, query_res, col_data, idx_search_results);
+    int retcode = traverseTableBTree(file_state, query_res, col_data, &idx_search_results);
 
     fprintf(stderr, "traversal done. retcode: %d", retcode);
 
