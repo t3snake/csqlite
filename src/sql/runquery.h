@@ -70,6 +70,6 @@ int traverseIndexBTree(FileState file_state, IndexSearchParams search_params, Ro
  */
 u8 isWhereSatisfied(WhereTree* where_tree, ColumnList cols);
 
-void sort(RowIds* rows);
+void mergeSort(s64* arr, u32 left, u32 right);
 
 #endif

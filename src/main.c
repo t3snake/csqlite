@@ -175,7 +175,7 @@ int runSelectQuery(const char* db_file_path, const char* query) {
 			}
 
 			// bubble sort?
-			sort(&row_ids);
+			mergeSort(row_ids.row_ids, 0, row_ids.len - 1);
 
 			fprintf(stderr, "debug info: \n");
 			for (int po = 0; po < row_ids.len; po++) {

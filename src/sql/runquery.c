@@ -314,21 +314,6 @@ int traverseTableBTree(FileState file_state, ParseQueryResult query, ColumnList 
 	return 0;
 }
 
-void sort(RowIds* rows) {
-	for (int i=0; i < rows->len; i++) {
-		u32 max_idx = 0;
-		for (int j=0; j < rows->len - i; j++) {
-			if (rows->row_ids[j] > rows->row_ids[max_idx]) {
-				max_idx = j;
-			}
-		}
-
-		s64 temp = rows->row_ids[max_idx];
-		rows->row_ids[max_idx] = rows->row_ids[rows->len - i - 1];
-		rows->row_ids[rows->len - i - 1] = temp;
-	}
-}
-
 int traverseIndexBTree(FileState file_state, IndexSearchParams search_params, RowIds* result) {
     u8 buffer[4];
 
@@ -410,6 +395,8 @@ int traverseIndexBTree(FileState file_state, IndexSearchParams search_params, Ro
 
 		u8 is_match = 0; // signals if the key is equal to the where condition value, thus if row id needs to be stored
 		s64 row_id = 0;
+		char* key_val_string = NULL;
+		s64 key_val_int = 0;
 
 		// go over all columns that contribute to the key in both leaf and interior
 		for (int j = 0; j < payload_len; j++) { // col_len would only cover the column values and not row id
@@ -440,6 +427,7 @@ int traverseIndexBTree(FileState file_state, IndexSearchParams search_params, Ro
                 text[col_size] = '\0';
 
                 is_match = (strcmp(text, search_params.where_col_value) == 0);
+                key_val_string = text;
 			} else if (search_params.where_col_mode == 1) { // int
                 s64 int_value = 0;
                 u8* bytes = malloc(col_size);
@@ -450,6 +438,9 @@ int traverseIndexBTree(FileState file_state, IndexSearchParams search_params, Ro
 
                 char* idx_col_val = malloc(100 * sizeof(char));
                 sprintf(idx_col_val, "%lld", int_value);
+
+                is_match = strcmp(idx_col_val, search_params.where_col_value);
+                key_val_int = int_value;
 			} else {
 			    fprintf(stderr, "Columns other than int and str not supported in indexes.\n");
 			}
@@ -461,6 +452,17 @@ int traverseIndexBTree(FileState file_state, IndexSearchParams search_params, Ro
 			//
 			// but for equal keys there can be multiple entries, where do they exist? left or right, have to search all in that case
 			// the file format spec does not specify for equal case in index b-trees
+
+			if (search_params.where_col_mode == 0 && search_params.where_col_value >= key_val_string) {
+				// Optimization - skip left child traversal since the value to find is not in left
+				continue;
+			}
+			if (search_params.where_col_mode == 1 && search_params.where_col_value >= key_val_string) {
+				// Optimization - skip left child traversal since the value to find is not in left
+				// continue;
+				// int check TODO
+			}
+
 			FileState fs;
 			fs.db_file = file_state.db_file;
 			fs.page_size = file_state.page_size;
@@ -561,4 +563,65 @@ u8 isWhereSatisfied(WhereTree* where_tree, ColumnList cols) {
     }
 
     return is_where_satisfied;
+}
+
+void merge(s64* arr, u32 left, u32 mid, u32 right) {
+    int i, j, k;
+    int n1 = mid - left + 1;
+    int n2 = right - mid;
+
+    // Create temporary arrays
+    int leftArr[50000], rightArr[50000];
+
+    // Copy data to temporary arrays
+    for (i = 0; i < n1; i++)
+        leftArr[i] = arr[left + i];
+    for (j = 0; j < n2; j++)
+        rightArr[j] = arr[mid + 1 + j];
+
+    // Merge the temporary arrays back into arr[left..right]
+    i = 0;
+    j = 0;
+    k = left;
+    while (i < n1 && j < n2) {
+        if (leftArr[i] <= rightArr[j]) {
+            arr[k] = leftArr[i];
+            i++;
+        }
+        else {
+            arr[k] = rightArr[j];
+            j++;
+        }
+        k++;
+    }
+
+    // Copy the remaining elements of leftArr[], if any
+    while (i < n1) {
+        arr[k] = leftArr[i];
+        i++;
+        k++;
+    }
+
+    // Copy the remaining elements of rightArr[], if any
+    while (j < n2) {
+        arr[k] = rightArr[j];
+        j++;
+        k++;
+    }
+}
+
+// The subarray to be sorted is in the index range [left-right]
+void mergeSort(s64* arr, u32 left, u32 right) {
+    if (left < right) {
+
+        // Calculate the midpoint
+        int mid = left + (right - left) / 2;
+
+        // Sort first and second halves
+        mergeSort(arr, left, mid);
+        mergeSort(arr, mid + 1, right);
+
+        // Merge the sorted halves
+        merge(arr, left, mid, right);
+    }
 }

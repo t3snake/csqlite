@@ -29,4 +29,16 @@
 		],
 		"adapter": "CodeLLDB",
 	},
+	{
+		"label": "Debug Win64 .dbinfo",
+		"build": {
+			"command": "cmake",
+			"args": ["--build", "./build"],
+			"cwd": "$ZED_WORKTREE_ROOT",
+		},
+		"program": "$ZED_WORKTREE_ROOT/build/Debug/sqlite.exe",
+		"request": "launch",
+		"args": ["companies.db", ".dbinfo"],
+		"adapter": "CodeLLDB",
+	},
 ]
