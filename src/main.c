@@ -245,7 +245,6 @@ int main(int argc, char *argv[]) {
     } else {
         char* lc_cmd = toLowerCase(command);
         if (strncmp(lc_cmd, "select", 6) == 0) {
-
             // select stm
             free(lc_cmd);
             int retcode = runSelectQuery(database_file_path, command);

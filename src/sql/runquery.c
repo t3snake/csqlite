@@ -136,6 +136,59 @@ int traverseTableBTree(FileState file_state, ParseQueryResult query, ColumnList 
 		*(row_offsets + i) = buffer[1] | (buffer[0] << 8);
 	}
 
+	// OPTIMIZATION - for both leaf and interior nodes, check if first and last cell
+	// are all less than currently searching row_id. If so skip current cell
+	if (idx_search_results->is_index_relevant) {
+		if (idx_search_results->current_search_idx < idx_search_results->row_ids.len) {
+			s64 first_offset = file_state.page_address + row_offsets[0];
+			s64 last_offset = file_state.page_address + row_offsets[row_count - 1];
+
+			s64 cur_row_id = idx_search_results->row_ids.row_ids[idx_search_results->current_search_idx];
+
+			ParseVarintResult varint;
+			s64 first_rowid = -99999;
+			s64 last_rowid = -99999;
+			if (is_interior) {
+				// seek to first cell and skip first 4 bytes
+				fseek(file_state.db_file, first_offset + 4, SEEK_SET);
+
+				varint = parseVarint(file_state.db_file); // rowid
+				first_rowid = varint.value;
+
+				// seek to last cell and skip first 4 bytes
+				fseek(file_state.db_file, last_offset + 4, SEEK_SET);
+
+				varint = parseVarint(file_state.db_file); // rowid
+				last_rowid = varint.value;
+			} else if (is_leaf) {
+				// seek to first cell
+				fseek(file_state.db_file, first_offset, SEEK_SET);
+
+				varint = parseVarint(file_state.db_file); // ignore
+
+				varint = parseVarint(file_state.db_file); // rowid
+				first_rowid = varint.value;
+
+				// seek to last cell
+				fseek(file_state.db_file, last_offset, SEEK_SET);
+
+				varint = parseVarint(file_state.db_file); // ignore
+
+				varint = parseVarint(file_state.db_file); // row-id
+				last_rowid = varint.value;
+			}
+
+			if( !( (cur_row_id >= first_rowid) && (cur_row_id < last_rowid) ) ) {
+				// skip processing this node, nothing to find here
+				return 0;
+			}
+
+		} else {
+			// OPTIMIZATION - search already over
+			return 0;
+		}
+	}
+
 	if (is_interior) {
 		// crawl children of B-Tree
 		for (int i = 0; i < row_count; i++) {
