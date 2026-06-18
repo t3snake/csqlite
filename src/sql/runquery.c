@@ -83,6 +83,18 @@ TableInfo getTableDetails(FILE* db_file, char* table_name, u16 page_size) {
     return tbl_info;
 }
 
+/*
+ * Checks if index search is finished, *if* index search is relevant.
+ * If index search is not relevant always returns false/0.
+ */
+u8 isIndexSearchOver(IndexSearchResult* idx_search) {
+	if (!idx_search->is_index_relevant) {
+		return 0;
+	}
+
+	return (idx_search->current_search_idx >= idx_search->row_ids.len);
+}
+
 int traverseTableBTree(FileState file_state, ParseQueryResult query, ColumnList col_data, IndexSearchResult* idx_search_results) {
 	u8 buffer[4];
 
@@ -105,7 +117,7 @@ int traverseTableBTree(FileState file_state, ParseQueryResult query, ColumnList 
 	// }
 
 	if (is_leaf && query.where_tree == NULL) {
-	    fprintf(stderr, "traverse leaf\n");
+	    // fprintf(stderr, "traverse leaf\n");
 		// Mini optimization: if count * is only property, early return
 		char* property = query.select_col_len > 0 ? toLowerCase(query.select_cols[0]) : "";
 		if (query.select_col_len == 1 && strcmp(property, "count(*)") == 0) {
@@ -122,7 +134,7 @@ int traverseTableBTree(FileState file_state, ParseQueryResult query, ColumnList 
 	// for interior node it is 12 byte and we need to store right most child pointer (last 4 bytes)
 	s64 rightmost_child = 0;
 	if (is_interior) {
-        fprintf(stderr, "traverse interior\n");
+        // fprintf(stderr, "traverse interior\n");
 		fread(buffer, 1, 4, file_state.db_file);
 		rightmost_child = (buffer[0] << 24) | (buffer[1] << 16) | (buffer[2] << 8) | buffer[3];
 	}
@@ -136,56 +148,59 @@ int traverseTableBTree(FileState file_state, ParseQueryResult query, ColumnList 
 		*(row_offsets + i) = buffer[1] | (buffer[0] << 8);
 	}
 
-	// OPTIMIZATION - for both leaf and interior nodes, check if first and last cell
-	// are all less than currently searching row_id. If so skip current cell
-	if (idx_search_results->is_index_relevant) {
-		if (idx_search_results->current_search_idx < idx_search_results->row_ids.len) {
-			s64 first_offset = file_state.page_address + row_offsets[0];
-			s64 last_offset = file_state.page_address + row_offsets[row_count - 1];
+	// OPTIMIZATION - for both leaf and interior nodes, check if last cell
+	// is less than currently searching row_id. If so skip current cell
+	if (isIndexSearchOver(idx_search_results)) {
+		// OPTIMIZATION - search already over
+		fprintf(stderr, "skipped, search done\n");
+		return 0;
 
-			s64 cur_row_id = idx_search_results->row_ids.row_ids[idx_search_results->current_search_idx];
+	} else if (idx_search_results->is_index_relevant) {
+		s64 last_offset = file_state.page_address + row_offsets[row_count - 1];
 
-			ParseVarintResult varint;
-			s64 first_rowid = -99999;
-			s64 last_rowid = -99999;
-			if (is_interior) {
-				// seek to first cell and skip first 4 bytes
-				fseek(file_state.db_file, first_offset + 4, SEEK_SET);
+		s64 cur_row_id = idx_search_results->row_ids.row_ids[idx_search_results->current_search_idx];
 
-				varint = parseVarint(file_state.db_file); // rowid
-				first_rowid = varint.value;
+		ParseVarintResult varint;
+		s64 last_rowid = -99999;
 
-				// seek to last cell and skip first 4 bytes
-				fseek(file_state.db_file, last_offset + 4, SEEK_SET);
+		if (is_interior) {
+			// seek to last cell and skip first 4 bytes
+			fseek(file_state.db_file, last_offset + 4, SEEK_SET);
 
-				varint = parseVarint(file_state.db_file); // rowid
-				last_rowid = varint.value;
-			} else if (is_leaf) {
-				// seek to first cell
-				fseek(file_state.db_file, first_offset, SEEK_SET);
+			varint = parseVarint(file_state.db_file); // rowid
+			last_rowid = varint.value;
 
-				varint = parseVarint(file_state.db_file); // ignore
+			if(cur_row_id >= last_rowid) {
+				// skip processing this node, nothing to find here
+				// fprintf(stderr, "skip to right ptr\n");
+				s64 page_address = file_state.page_size * (rightmost_child - 1); // last child pending - rightmost
 
-				varint = parseVarint(file_state.db_file); // rowid
-				first_rowid = varint.value;
+				fseek(file_state.db_file, page_address, SEEK_SET);
 
-				// seek to last cell
-				fseek(file_state.db_file, last_offset, SEEK_SET);
+				FileState new_state;
+				new_state.db_file = file_state.db_file;
+				new_state.page_size = file_state.page_size;
+				new_state.page_address = page_address;
 
-				varint = parseVarint(file_state.db_file); // ignore
+				int retcode = traverseTableBTree(new_state, query, col_data, idx_search_results);
 
-				varint = parseVarint(file_state.db_file); // row-id
-				last_rowid = varint.value;
+				return retcode;
 			}
 
-			if( !( (cur_row_id >= first_rowid) && (cur_row_id < last_rowid) ) ) {
+		} else if (is_leaf) {
+			// seek to last cell
+			fseek(file_state.db_file, last_offset, SEEK_SET);
+
+			varint = parseVarint(file_state.db_file); // ignore
+
+			varint = parseVarint(file_state.db_file); // row-id
+			last_rowid = varint.value;
+
+			if (cur_row_id >= last_rowid) {
 				// skip processing this node, nothing to find here
+				// fprintf(stderr, "skipped\n");
 				return 0;
 			}
-
-		} else {
-			// OPTIMIZATION - search already over
-			return 0;
 		}
 	}
 
@@ -231,6 +246,10 @@ int traverseTableBTree(FileState file_state, ParseQueryResult query, ColumnList 
 				// err code
 				return retcode;
 			}
+
+			if (isIndexSearchOver(idx_search_results)) {
+				return 0;
+			}
 		}
 
 		s64 page_address = file_state.page_size * (rightmost_child - 1); // last child pending - rightmost
@@ -243,13 +262,12 @@ int traverseTableBTree(FileState file_state, ParseQueryResult query, ColumnList 
 		new_state.page_address = page_address;
 
 		int retcode = traverseTableBTree(new_state, query, col_data, idx_search_results);
-
-		return retcode;
+		return retcode; // no need to check index search over since here the traver
 	}
 
 	if (!is_leaf) {
 		// expect this to be true if not interior (index pages not supported)
-		fprintf(stderr, "Page is neither a B-Tree leaf nor interior\n");
+		fprintf(stderr, "Unexpected: Page is neither a B-Tree leaf nor interior\n");
 		return 1;
 	}
 
@@ -388,11 +406,11 @@ int traverseIndexBTree(FileState file_state, IndexSearchParams search_params, Ro
 	// for interior node it is 12 byte and we need to store right most child pointer (last 4 bytes)
 	s64 rightmost_child = 0;
 	if (is_interior) {
-        fprintf(stderr, "traverse idx interior\n");
+        // fprintf(stderr, "traverse idx interior\n");
 		fread(buffer, 1, 4, file_state.db_file);
 		rightmost_child = (buffer[0] << 24) | (buffer[1] << 16) | (buffer[2] << 8) | buffer[3];
 	} else {
-		fprintf(stderr, "traverse idx leaf\n");
+		// fprintf(stderr, "traverse idx leaf\n");
 	}
 
 	// get row offset in page for each row
